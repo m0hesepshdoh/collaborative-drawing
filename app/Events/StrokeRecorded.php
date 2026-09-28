@@ -11,6 +11,8 @@ class StrokeRecorded implements ShouldBroadcastNow
 {
     use Dispatchable, SerializesModels;
 
+    private const MAX_BROADCAST_POINTS = 128;
+
     public function __construct(public string $code, public array $stroke) {}
 
     public function broadcastOn(): array
@@ -25,6 +27,21 @@ class StrokeRecorded implements ShouldBroadcastNow
 
     public function broadcastWith(): array
     {
-        return $this->stroke;
+        $points = $this->stroke['points'];
+        $pointCount = count($points);
+
+        if ($pointCount > self::MAX_BROADCAST_POINTS) {
+            $points = array_map(
+                fn (int $index): array => $points[(int) round($index * ($pointCount - 1) / (self::MAX_BROADCAST_POINTS - 1))],
+                range(0, self::MAX_BROADCAST_POINTS - 1),
+            );
+        }
+
+        $points = array_map(fn (array $point): array => [
+            'x' => round((float) $point['x'], 1),
+            'y' => round((float) $point['y'], 1),
+        ], $points);
+
+        return [...$this->stroke, 'points' => $points];
     }
 }

@@ -37,6 +37,7 @@ class SessionController extends Controller
 
     public function create(Request $r)
     {
+        $data = $r->validate(['bot_after_timeout' => ['sometimes', 'boolean']]);
         $s = DB::transaction(function () use ($r) {
             $s = DrawingSession::create(['code' => $this->newCode(), 'background_id' => Background::inRandomOrder()->value('id'), 'status' => 'waiting']);
             $s->players()->create(['ip_address' => $r->ip(), 'is_bot' => false, 'last_activity_at' => now(), 'joined_at' => now()]);
@@ -44,7 +45,9 @@ class SessionController extends Controller
             return $s;
         });
         event(new PlayerJoined($s->code, $r->ip()));
-        BotJoinJob::dispatch($s->id)->delay(now()->addSeconds(60));
+        if ($data['bot_after_timeout'] ?? false) {
+            BotJoinJob::dispatch($s->id)->delay(now()->addSeconds(60));
+        }
 
         return redirect()->route('session.show', $s->code);
     }
@@ -137,7 +140,7 @@ class SessionController extends Controller
     {
         $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
         abort_unless($this->activeHuman($s, $r->ip()), 403);
-        $d = $r->validate(['points' => 'required|array|min:2|max:1000', 'points.*.x' => 'required|numeric', 'points.*.y' => 'required|numeric', 'color' => ['required', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'], 'size' => 'required|integer|min:1|max:40', 'drawn_at' => 'nullable|date', 'client_stroke_id' => 'required|string|max:100']);
+        $d = $r->validate(['points' => 'required|array|min:2|max:1000', 'points.*.x' => 'required|numeric|min:0|max:800', 'points.*.y' => 'required|numeric|min:0|max:600', 'color' => ['required', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'], 'size' => 'required|integer|min:1|max:40', 'drawn_at' => 'nullable|date', 'client_stroke_id' => 'required|string|max:100']);
         $stroke = $s->recordedStrokes()->create(['player_ip' => $r->ip(), 'points' => $d['points'], 'color' => $d['color'], 'size' => $d['size'], 'drawn_at' => $d['drawn_at'] ?? now()]);
         broadcast(new StrokeRecorded($s->code, [
             'id' => $stroke->id,

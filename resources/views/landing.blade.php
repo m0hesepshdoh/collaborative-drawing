@@ -80,6 +80,11 @@
 
                     <form action="{{ route('session.create') }}" method="POST">
                         @csrf
+                        <label class="mb-2 flex items-start gap-3 rounded-lg border border-chalk/15 bg-chalk/5 px-4 py-3 text-sm text-chalk/90">
+                            <input type="checkbox" name="bot_after_timeout" value="1"
+                                class="mt-0.5 size-4 shrink-0 accent-clay">
+                            <span>Play with the bot if nobody joins in 60 seconds</span>
+                        </label>
                         <button type="submit"
                             class="w-full bg-clay hover:bg-clay/90 text-ink font-medium rounded-lg px-4 py-3 transition-colors">Start
                             a session</button>
