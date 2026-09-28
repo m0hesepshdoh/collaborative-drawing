@@ -1,0 +1,3 @@
+<?php
+use Illuminate\Database\Migrations\Migration; use Illuminate\Database\Schema\Blueprint; use Illuminate\Support\Facades\Schema;
+return new class extends Migration { public function up(): void { Schema::create('players', function(Blueprint $t){$t->id();$t->foreignId('session_id')->constrained('sessions')->cascadeOnDelete();$t->string('ip_address',45)->nullable()->index();$t->boolean('is_bot')->default(false);$t->timestamp('last_activity_at')->nullable();$t->timestamp('joined_at')->useCurrent();$t->timestamp('left_at')->nullable();$t->index(['session_id','left_at']);}); } public function down(): void {Schema::dropIfExists('players');}};

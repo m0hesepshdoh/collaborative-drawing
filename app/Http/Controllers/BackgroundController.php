@@ -1,0 +1,3 @@
+<?php
+namespace App\Http\Controllers; use App\Models\Background; use Illuminate\Http\Request; use Illuminate\Support\Facades\Storage;
+class BackgroundController extends Controller {public function index(){return view('admin.backgrounds',['backgrounds'=>Background::latest('created_at')->get()]);}public function store(Request $r){$d=$r->validate(['image'=>'required|image|max:5120']);$path=$d['image']->store('backgrounds','public');Background::create(['filename'=>$d['image']->getClientOriginalName(),'path'=>$path]);return back()->with('message','Background uploaded.');}public function destroy(Background $background){Storage::disk('public')->delete($background->path);$background->delete();return back()->with('message','Background deleted.');}}
