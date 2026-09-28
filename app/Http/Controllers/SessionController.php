@@ -97,6 +97,33 @@ class SessionController extends Controller
         return view('session', ['session' => $s, 'me' => $me, 'initialStrokes' => $s->recordedStrokes()->orderBy('drawn_at')->get(['points', 'color', 'size'])]);
     }
 
+    public function state(Request $r, string $code)
+    {
+        $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
+        abort_unless($this->activeHuman($s, $r->ip()), 403);
+
+        $deadline = $s->finish_deadline_at
+            ? \Illuminate\Support\Carbon::parse($s->finish_deadline_at)
+            : null;
+        if ($s->finish_state === 'waiting' && $deadline && $deadline->isPast()) {
+            $this->finalizeSession($s, $s->finished_by_ip ?? $r->ip());
+            $s->refresh();
+            $deadline = null;
+        }
+
+        return response()->json([
+            'state' => $s->finish_state ?? 'drawing',
+            'remainingSeconds' => $deadline ? max(0, now()->diffInSeconds($deadline, false)) : 0,
+            'finishedByIp' => $s->finished_by_ip,
+            'deadlineAt' => $deadline?->toIso8601String(),
+            'finishedAt' => $s->finished_at,
+            'imageUrl' => $s->ai_image_url,
+            'canGenerateAi' => $s->finish_state === 'finalized'
+                && ! $s->ai_image_url
+                && $s->finished_by_ip === $r->ip(),
+        ]);
+    }
+
     public function leave(Request $r, string $code)
     {
         $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
@@ -269,20 +296,31 @@ class SessionController extends Controller
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer '.$apiKey,
                 'Content-Type' => 'application/json',
-            ])->post('https://token.sensenova.cn/v1/images/edits', [
+            ])->post('https://token.sensenova.ai/v1/images/edits', [
                 'model' => 'sensenova-u1.5-lite',
                 'images' => [[ 'image_url' => $data['image_data_url'] ]],
                 'prompt' => $prompt,
                 'size' => 'auto',
                 'n' => 1,
                 'watermark' => false,
+                'response_format' => 'url',
             ]);
 
             if (! $response->successful()) {
+                $status = $response->status();
+                $message = $response->json('error.message') ?? $response->json('message');
+
+                if ($status === 401) {
+                    $message = 'SenseNova rejected SENSENOVA_API_KEY. Replace it with an active TokenPlan API key from the SenseNova console.';
+                } elseif ($status === 403) {
+                    $message = 'SenseNova denied image editing for this request. Check that the key can access sensenova-u1.5-lite and that the prompt is supported.';
+                }
+
                 return response()->json([
                     'success' => false,
-                    'message' => $response->json('error.message') ?? $response->json('message') ?? 'SenseNova request failed.',
-                ], 500);
+                    'message' => $message ?? 'SenseNova request failed.',
+                    'provider_status' => $status,
+                ], 502);
             }
 
             $payload = $response->json();

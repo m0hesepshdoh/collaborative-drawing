@@ -47,4 +47,29 @@ class SessionFinishFlowTest extends TestCase
         $this->assertNotNull($session->finished_at);
         $this->assertSame('127.0.0.2', $session->finished_by_ip);
     }
+
+    public function test_state_endpoint_finalizes_an_expired_waiting_session(): void
+    {
+        $session = DrawingSession::create([
+            'code' => 'DEF456',
+            'background_id' => null,
+            'status' => 'active',
+            'finish_state' => 'waiting',
+            'finished_by_ip' => '127.0.0.1',
+            'finish_deadline_at' => now()->subSecond(),
+        ]);
+        $session->players()->create([
+            'ip_address' => '127.0.0.1',
+            'is_bot' => false,
+            'last_activity_at' => now(),
+            'joined_at' => now(),
+        ]);
+
+        $request = Request::create('/session/DEF456/state', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+        $response = (new SessionController)->state($request, 'DEF456');
+
+        $this->assertSame('finalized', $response->getData()->state);
+        $this->assertTrue($response->getData()->canGenerateAi);
+        $this->assertNotNull($session->fresh()->finished_at);
+    }
 }

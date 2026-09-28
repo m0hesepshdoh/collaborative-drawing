@@ -43,7 +43,7 @@
             </div>
         </div>
         <div class="border-t border-chalk/10 bg-ink/95 px-4 py-3">
-            <div id="ai-result" class="hidden">
+            <div id="ai-result" class="hidden" aria-live="polite">
                 <div id="ai-status" class="mb-2 text-sm text-chalk">Done!</div>
                 <img id="ai-image" class="max-h-[420px] w-full rounded-lg border border-chalk/10 object-contain bg-[#f6f1ea]" alt="AI polished drawing" hidden>
                 <div class="mt-3 flex gap-2">

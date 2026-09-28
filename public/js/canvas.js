@@ -29,6 +29,7 @@ let bg = null,
     remoteLocked: false,
     finalized: false,
     aiStarted: false,
+    aiAttempted: false,
     timerEndsAt: 0,
     lastCanvasDataUrl: "",
     status: "drawing",
@@ -57,19 +58,27 @@ function getRemainingSeconds() {
 
 function applyServerState(serverState) {
   const state = serverState?.state || "drawing";
-  const remaining = Number(serverState?.remainingSeconds ?? 0);
   finishState.status = state;
   finishState.localLocked = state === "waiting" && serverState?.finishedByIp === cfg.meIp;
   finishState.remoteLocked = state === "waiting" && serverState?.finishedByIp && serverState?.finishedByIp !== cfg.meIp;
   finishState.finalized = state === "finalized";
   finishState.timerEndsAt = serverState?.deadlineAt ? Date.parse(serverState.deadlineAt) : 0;
 
-  if (state === "waiting" && serverState?.deadlineAt) {
-    finishState.timerEndsAt = Date.parse(serverState.deadlineAt);
+  if (state === "waiting") {
+    startCountdown(finishState.timerEndsAt);
+  } else if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
   }
 
   updateStatusText();
   setFinishButtonState();
+
+  if (serverState?.imageUrl) {
+    showAiImage(serverState.imageUrl);
+  } else if (state === "finalized") {
+    finalizeDrawing(Boolean(serverState?.canGenerateAi));
+  }
 }
 
 function updateStatusText() {
@@ -204,9 +213,7 @@ channel
     liveStrokes.push(stroke);
     drawStroke(stroke);
   })
-  .listenForWhisper("finish", (payload) => handleRemoteFinish(payload))
   .listenForWhisper("reset", () => resetDrawingSession())
-  .listenForWhisper("finalize", () => finalizeDrawing())
   .listen(".bot.stroke", (e) => addStroke(e))
   .listen(".stroke.recorded", (stroke) => {
     if (stroke.client_stroke_id) {
@@ -312,19 +319,30 @@ document.getElementById("clear").onclick = async () => {
   } catch {}
 };
 
-function startCountdown(seconds) {
-  if (countdownTimer) clearInterval(countdownTimer);
-  finishState.timerEndsAt = Date.now() + seconds * 1000;
+function startCountdown(deadlineAt) {
+  if (!deadlineAt) return;
+  finishState.timerEndsAt = deadlineAt;
+  if (countdownTimer) return;
   countdownTimer = setInterval(() => {
     updateStatusText();
     const remaining = getRemainingSeconds();
     if (remaining <= 0) {
       clearInterval(countdownTimer);
       countdownTimer = null;
-      finalizeDrawing();
+      syncSessionState();
     }
   }, 250);
   updateStatusText();
+}
+
+async function syncSessionState() {
+  try {
+    const response = await fetch(`/session/${cfg.code}/state`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!checkAuth(response) || !response.ok) return;
+    applyServerState(await response.json());
+  } catch {}
 }
 
 async function requestFinish() {
@@ -341,7 +359,7 @@ async function requestFinish() {
     }
     applyServerState(payload);
     if (payload.state === "finalized") {
-      finalizeDrawing();
+      finalizeDrawing(true);
     }
   } catch (error) {
     status.textContent = error.message || "Unable to finish.";
@@ -349,8 +367,7 @@ async function requestFinish() {
   }
 }
 
-function finalizeDrawing() {
-  if (finishState.finalized) return;
+function finalizeDrawing(generateAi = false) {
   finishState.finalized = true;
   finishState.localLocked = true;
   finishState.remoteLocked = true;
@@ -362,7 +379,10 @@ function finalizeDrawing() {
   finishState.timerEndsAt = 0;
   updateStatusText();
   setFinishButtonState();
-  exportCanvasAsPngForAi();
+  if (generateAi && !finishState.aiStarted && !finishState.aiAttempted) {
+    finishState.aiAttempted = true;
+    exportCanvasAsPngForAi();
+  }
 }
 
 finishBtn.addEventListener("click", requestFinish);
@@ -371,6 +391,7 @@ async function exportCanvasAsPngForAi() {
   if (finishState.aiStarted) return;
   finishState.aiStarted = true;
   aiResultBox.classList.remove("hidden");
+  aiResultBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
   aiStatus.textContent = "AI is generating…";
   aiErrorEl.classList.add("hidden");
   aiErrorEl.textContent = "";
@@ -378,24 +399,30 @@ async function exportCanvasAsPngForAi() {
   downloadAiLink.classList.add("hidden");
   retryAiBtn.classList.add("hidden");
 
-  const blob = await new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (!result) {
-        reject(new Error("Could not export canvas as PNG."));
-        return;
-      }
-      resolve(result);
-    }, "image/png");
-  });
+  try {
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((result) => {
+        if (!result) {
+          reject(new Error("Could not export canvas as PNG."));
+          return;
+        }
+        resolve(result);
+      }, "image/png");
+    });
 
-  const reader = new FileReader();
-  finishState.lastCanvasDataUrl = await new Promise((resolve, reject) => {
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Failed to encode canvas image."));
-    reader.readAsDataURL(blob);
-  });
+    const reader = new FileReader();
+    finishState.lastCanvasDataUrl = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Failed to encode canvas image."));
+      reader.readAsDataURL(blob);
+    });
 
-  await requestSenseNovaImage(finalizeDrawing);
+    await requestSenseNovaImage();
+  } catch (error) {
+    showAiError(error.message || "Could not prepare the drawing for AI generation.");
+    finishState.aiStarted = false;
+    updateStatusText();
+  }
 }
 
 function showAiError(message) {
@@ -431,14 +458,7 @@ async function requestSenseNovaImage() {
       throw new Error("SenseNova returned no usable image URL.");
     }
 
-    aiStatus.textContent = "Done!";
-    aiImageEl.src = imageUrl;
-    aiImageEl.hidden = false;
-    downloadAiLink.href = imageUrl;
-    downloadAiLink.download = "ai-finished-drawing.png";
-    downloadAiLink.classList.remove("hidden");
-    retryAiBtn.classList.remove("hidden");
-    aiResultBox.classList.remove("hidden");
+    showAiImage(imageUrl);
   } catch (error) {
     showAiError(error.message || "SenseNova image generation failed.");
     finishState.aiStarted = false;
@@ -446,6 +466,18 @@ async function requestSenseNovaImage() {
     finishState.aiStarted = false;
     updateStatusText();
   }
+}
+
+function showAiImage(imageUrl) {
+  aiStatus.textContent = "AI finished the drawing";
+  aiImageEl.src = imageUrl;
+  aiImageEl.hidden = false;
+  downloadAiLink.href = imageUrl;
+  downloadAiLink.download = "ai-finished-drawing.png";
+  downloadAiLink.classList.remove("hidden");
+  retryAiBtn.classList.remove("hidden");
+  aiResultBox.classList.remove("hidden");
+  aiResultBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function extractImageUrl(value) {
@@ -481,6 +513,7 @@ retryAiBtn.addEventListener("click", () => {
     showAiError("There is no finished drawing to retry yet.");
     return;
   }
+  finishState.aiAttempted = true;
   requestSenseNovaImage();
 });
 
@@ -501,6 +534,7 @@ async function resetDrawingSession() {
     finishState.remoteLocked = false;
     finishState.finalized = false;
     finishState.aiStarted = false;
+    finishState.aiAttempted = false;
     finishState.timerEndsAt = 0;
     finishState.status = payload.state || "drawing";
     aiImageEl.hidden = true;
@@ -546,3 +580,5 @@ window.addEventListener("beforeunload", () =>
 
 updateStatusText();
 setFinishButtonState();
+syncSessionState();
+setInterval(syncSessionState, 2000);

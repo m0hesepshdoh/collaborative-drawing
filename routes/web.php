@@ -18,6 +18,7 @@ Route::middleware('not.banned')->group(function () {
     Route::post('/session/{code}/record-stroke', [SessionController::class, 'recordStroke'])->name('session.recordStroke');
     Route::post('/session/{code}/heartbeat', [SessionController::class, 'heartbeat'])->name('session.heartbeat');
     Route::post('/session/{code}/finish', [SessionController::class, 'finish'])->name('session.finish');
+    Route::get('/session/{code}/state', [SessionController::class, 'state'])->name('session.state');
     Route::post('/session/{code}/reset', [SessionController::class, 'resetSession'])->name('session.reset');
     Route::post('/session/{code}/generate-ai', [SessionController::class, 'generateAi'])->name('session.generateAi');
 });
