@@ -6,6 +6,7 @@ use App\Events\BotJoined;
 use App\Events\CanvasCleared;
 use App\Events\PlayerJoined;
 use App\Events\PlayerLeft;
+use App\Events\StrokeRecorded;
 use App\Jobs\BotDrawJob;
 use App\Jobs\BotJoinJob;
 use App\Models\Background;
@@ -15,6 +16,7 @@ use App\Models\RecordedStroke;
 use App\Models\Report;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class SessionController extends Controller
@@ -135,10 +137,17 @@ class SessionController extends Controller
     {
         $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
         abort_unless($this->activeHuman($s, $r->ip()), 403);
-        $d = $r->validate(['points' => 'required|array|min:2|max:1000', 'points.*.x' => 'required|numeric', 'points.*.y' => 'required|numeric', 'color' => ['required', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'], 'size' => 'required|integer|min:1|max:40', 'drawn_at' => 'nullable|date']);
-        RecordedStroke::create(['session_id' => $s->id, 'player_ip' => $r->ip(), 'points' => $d['points'], 'color' => $d['color'], 'size' => $d['size'], 'drawn_at' => $d['drawn_at'] ?? now()]);
+        $d = $r->validate(['points' => 'required|array|min:2|max:1000', 'points.*.x' => 'required|numeric', 'points.*.y' => 'required|numeric', 'color' => ['required', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'], 'size' => 'required|integer|min:1|max:40', 'drawn_at' => 'nullable|date', 'client_stroke_id' => 'required|string|max:100']);
+        $stroke = $s->recordedStrokes()->create(['player_ip' => $r->ip(), 'points' => $d['points'], 'color' => $d['color'], 'size' => $d['size'], 'drawn_at' => $d['drawn_at'] ?? now()]);
+        broadcast(new StrokeRecorded($s->code, [
+            'id' => $stroke->id,
+            'points' => $stroke->points,
+            'color' => $stroke->color,
+            'size' => $stroke->size,
+            'client_stroke_id' => $d['client_stroke_id'],
+        ]))->toOthers();
 
-        return response()->noContent();
+        return response()->json(['id' => $stroke->id], 201);
     }
 
     public function heartbeat(Request $r, string $code)
@@ -149,5 +158,200 @@ class SessionController extends Controller
         $p->update(['last_activity_at' => now()]);
 
         return response()->noContent();
+    }
+
+    public function finish(Request $r, string $code)
+    {
+        $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
+        $p = $this->activeHuman($s, $r->ip());
+        abort_unless($p, 403);
+
+        $state = $s->finish_state ?? 'drawing';
+
+        if ($state === 'finalized') {
+            return response()->json([
+                'state' => 'finalized',
+                'remainingSeconds' => 0,
+                'finishedByIp' => $s->finished_by_ip,
+                'finishedAt' => $s->finished_at,
+            ]);
+        }
+
+        if ($state === 'waiting' && $s->finished_by_ip && $s->finished_by_ip !== $r->ip()) {
+            $deadline = $s->finish_deadline_at ? \Illuminate\Support\Carbon::parse($s->finish_deadline_at) : null;
+            if ($deadline && $deadline->isPast()) {
+                $state = 'finalized';
+            }
+        }
+
+        if ($state === 'finalized') {
+            return response()->json([
+                'state' => 'finalized',
+                'remainingSeconds' => 0,
+                'finishedByIp' => $s->finished_by_ip,
+                'finishedAt' => $s->finished_at,
+            ]);
+        }
+
+        if ($state === 'waiting') {
+            $deadline = $s->finish_deadline_at ? \Illuminate\Support\Carbon::parse($s->finish_deadline_at) : null;
+            if ($s->finished_by_ip === $r->ip()) {
+                return response()->json([
+                    'state' => 'waiting',
+                    'remainingSeconds' => $deadline ? max(0, $deadline->diffInSeconds(now(), false)) : 120,
+                    'finishedByIp' => $s->finished_by_ip,
+                    'deadlineAt' => $deadline?->toIso8601String(),
+                ]);
+            }
+
+            $this->finalizeSession($s, $r->ip(), true);
+
+            return response()->json([
+                'state' => 'finalized',
+                'remainingSeconds' => 0,
+                'finishedByIp' => $s->finished_by_ip,
+                'finishedAt' => $s->finished_at,
+            ]);
+        }
+
+        $this->lockSessionForFinish($s, $r->ip());
+
+        return response()->json([
+            'state' => 'waiting',
+            'remainingSeconds' => 120,
+            'finishedByIp' => $r->ip(),
+            'deadlineAt' => now()->addMinutes(2)->toIso8601String(),
+        ]);
+    }
+
+    public function resetSession(Request $r, string $code)
+    {
+        $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
+        abort_unless($this->activeHuman($s, $r->ip()), 403);
+
+        $s->update([
+            'finish_state' => 'drawing',
+            'finished_by_ip' => null,
+            'finish_deadline_at' => null,
+            'finished_at' => null,
+            'ai_image_url' => null,
+            'ai_prompt' => null,
+        ]);
+        $s->recordedStrokes()->delete();
+
+        return response()->json(['state' => 'drawing']);
+    }
+
+    public function generateAi(Request $r, string $code)
+    {
+        $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
+        abort_unless($this->activeHuman($s, $r->ip()), 403);
+
+        $data = $r->validate([
+            'image_data_url' => ['required', 'string'],
+            'prompt' => ['nullable', 'string'],
+        ]);
+
+        $apiKey = env('SENSENOVA_API_KEY');
+        if (blank($apiKey)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'SENSENOVA_API_KEY is not configured in the server environment.',
+            ], 500);
+        }
+
+        $prompt = $data['prompt'] ?? 'This is a rough hand-drawn sketch made collaboratively by two people. Turn it into a polished, finished illustration. Preserve every drawn shape, object, and layout exactly as it appears — do not add, remove, or move any elements. Only clean up the lines, add color, shading, and texture to make it look like a professional piece of art. Keep the composition and proportions identical to the sketch.';
+
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer '.$apiKey,
+                'Content-Type' => 'application/json',
+            ])->post('https://token.sensenova.cn/v1/images/edits', [
+                'model' => 'sensenova-u1.5-lite',
+                'images' => [[ 'image_url' => $data['image_data_url'] ]],
+                'prompt' => $prompt,
+                'size' => 'auto',
+                'n' => 1,
+                'watermark' => false,
+            ]);
+
+            if (! $response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $response->json('error.message') ?? $response->json('message') ?? 'SenseNova request failed.',
+                ], 500);
+            }
+
+            $payload = $response->json();
+            $imageUrl = $this->extractSenseNovaImageUrl($payload);
+            if (! $imageUrl) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'SenseNova returned no usable image URL.',
+                ], 500);
+            }
+
+            $s->update([
+                'ai_image_url' => $imageUrl,
+                'ai_prompt' => $prompt,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'image_url' => $imageUrl,
+                'state' => 'done',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    protected function lockSessionForFinish(DrawingSession $s, string $ip): void
+    {
+        $s->update([
+            'finish_state' => 'waiting',
+            'finished_by_ip' => $ip,
+            'finish_deadline_at' => now()->addMinutes(2),
+            'finished_at' => null,
+        ]);
+    }
+
+    protected function finalizeSession(DrawingSession $s, string $ip, bool $completedByOtherPlayer = false): void
+    {
+        $s->update([
+            'finish_state' => 'finalized',
+            'finished_by_ip' => $completedByOtherPlayer ? $ip : ($s->finished_by_ip ?? $ip),
+            'finish_deadline_at' => null,
+            'finished_at' => now(),
+        ]);
+    }
+
+    protected function extractSenseNovaImageUrl(mixed $value): ?string
+    {
+        if (! is_array($value) && ! is_object($value)) {
+            return null;
+        }
+
+        $value = (array) $value;
+
+        foreach (['image_url', 'imageUrl', 'url', 'result'] as $key) {
+            if (isset($value[$key]) && is_string($value[$key]) && $value[$key] !== '') {
+                return $value[$key];
+            }
+        }
+
+        foreach ($value as $item) {
+            if (is_array($item) || is_object($item)) {
+                $nested = $this->extractSenseNovaImageUrl($item);
+                if ($nested) {
+                    return $nested;
+                }
+            }
+        }
+
+        return null;
     }
 }

@@ -8,7 +8,7 @@ class DrawingSession extends Model
 {
     protected $table = 'sessions';
 
-    protected $fillable = ['code', 'background_id', 'status'];
+    protected $fillable = ['code', 'background_id', 'status', 'finish_state', 'finished_by_ip', 'finish_deadline_at', 'finished_at', 'ai_image_url', 'ai_prompt'];
 
     public function players()
     {
