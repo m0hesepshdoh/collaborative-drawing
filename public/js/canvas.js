@@ -12,6 +12,20 @@ let bg = null,
   erase = false,
   dirtyActivity = true;
 const logical = { w: 800, h: 600 };
+
+function leaveToLanding(message) {
+  status.textContent = message;
+  setTimeout(() => (location.href = cfg.landingUrl || "/"), 900);
+}
+
+function checkAuth(res) {
+  if (res.status === 403) {
+    leaveToLanding("Session ended");
+    return false;
+  }
+  return true;
+}
+
 function fit() {
   const r = canvas.getBoundingClientRect(),
     d = window.devicePixelRatio || 1;
@@ -88,8 +102,7 @@ channel
   .listen(".canvas.cleared", () => redrawBackground())
   .listen(".player.kicked", (e) => {
     if (e.ip === cfg.meIp) {
-      status.textContent = "You were removed";
-      setTimeout(() => (location.href = "/"), 900);
+      leaveToLanding("You were removed");
     }
   });
 function style() {
@@ -124,15 +137,18 @@ async function end() {
   if (points.length < 2) return;
   const s = { points: [...points], ...style() };
   channel.whisper("stroke", s);
-  await fetch(`/session/${cfg.code}/record-stroke`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRF-TOKEN": cfg.csrf,
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ ...s, drawn_at: new Date().toISOString() }),
-  });
+  try {
+    const res = await fetch(`/session/${cfg.code}/record-stroke`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-TOKEN": cfg.csrf,
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ ...s, drawn_at: new Date().toISOString() }),
+    });
+    checkAuth(res);
+  } catch {}
   points = [];
 }
 canvas.addEventListener("pointerup", end);
@@ -144,19 +160,23 @@ document.getElementById("eraser").onclick = () => {
 document.getElementById("clear").onclick = async () => {
   cfg.initialStrokes = [];
   redrawBackground();
-  await fetch(`/session/${cfg.code}/clear`, {
-    method: "POST",
-    headers: { "X-CSRF-TOKEN": cfg.csrf, Accept: "application/json" },
-  });
+  try {
+    const res = await fetch(`/session/${cfg.code}/clear`, {
+      method: "POST",
+      headers: { "X-CSRF-TOKEN": cfg.csrf, Accept: "application/json" },
+    });
+    checkAuth(res);
+  } catch {}
 };
 setInterval(async () => {
   if (!dirtyActivity) return;
   dirtyActivity = false;
   try {
-    await fetch(`/session/${cfg.code}/heartbeat`, {
+    const res = await fetch(`/session/${cfg.code}/heartbeat`, {
       method: "POST",
       headers: { "X-CSRF-TOKEN": cfg.csrf, Accept: "application/json" },
     });
+    checkAuth(res);
   } catch {}
 }, 60000);
 window.addEventListener("beforeunload", () =>
