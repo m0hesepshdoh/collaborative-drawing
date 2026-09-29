@@ -14,6 +14,7 @@
                         <th class="py-2">Code</th>
                         <th>Status</th>
                         <th>Players</th>
+                        <th>Live preview</th>
                         <th>Started</th>
                         <th>Last activity</th>
                         <th>Actions</th>
@@ -31,6 +32,14 @@
                                     <?php echo method_field('DELETE'); ?><button class="text-clay hover:underline">remove</button></form>
                         </div><?php endforeach; $__env->popLoop(); $loop = $__env->getLastLoop(); ?>
                         </td>
+                        <td class="py-3">
+                            <div class="w-40 sm:w-48">
+                                <div class="mb-1 text-xs text-slate" data-preview-status="<?php echo e($s->code); ?>">Connecting…</div>
+                                <canvas data-session-preview="<?php echo e($s->code); ?>" width="800" height="600"
+                                    class="block aspect-4/3 w-full rounded border border-chalk/20 bg-[#f6f1ea]"
+                                    aria-label="Live drawing preview for session <?php echo e($s->code); ?>"></canvas>
+                            </div>
+                        </td>
                         <td class="text-slate"><?php echo e($s->created_at); ?></td>
                         <td class="text-slate"><?php echo e($s->players->max('last_activity_at')); ?></td>
                         <td>
@@ -42,4 +51,17 @@
             </table>
         </div>
 </main><?php $__env->stopSection(); ?>
+<?php $__env->startSection('scripts'); ?>
+    <script>
+        window.ADMIN_SESSION_PREVIEWS = <?php echo json_encode($previews, 15, 512) ?>;
+        window.ADMIN_REVERB_CONFIG = {
+            key: <?php echo json_encode(env('REVERB_APP_KEY'), 15, 512) ?>,
+            host: <?php echo json_encode(env('REVERB_HOST', '127.0.0.1'), 512) ?>,
+            port: <?php echo json_encode((int) env('REVERB_PORT', 8080), 512) ?>,
+            scheme: <?php echo json_encode(env('REVERB_SCHEME', 'http'), 512) ?>,
+            csrf: <?php echo json_encode(csrf_token(), 15, 512) ?>,
+        };
+    </script>
+    <script type="module" src="<?php echo e(asset('js/admin-session-previews.js')); ?>"></script>
+<?php $__env->stopSection(); ?>
 <?php echo $__env->make('layout', array_diff_key(get_defined_vars(), ['__data' => 1, '__path' => 1]))->render(); ?><?php /**PATH /Users/fis006/Downloads/collaborative-drawing/resources/views/admin/dashboard.blade.php ENDPATH**/ ?>

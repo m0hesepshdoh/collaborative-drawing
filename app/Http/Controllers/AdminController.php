@@ -34,9 +34,22 @@ class AdminController extends Controller
 
     public function dashboard()
     {
-        $sessions = DrawingSession::with(['players' => fn ($q) => $q->whereNull('left_at')])->whereIn('status', ['waiting', 'active'])->latest()->get();
+        $sessions = DrawingSession::with([
+            'background',
+            'players' => fn ($q) => $q->whereNull('left_at'),
+            'recordedStrokes' => fn ($q) => $q->select(['id', 'session_id', 'points', 'color', 'size'])->orderBy('drawn_at'),
+        ])->whereIn('status', ['waiting', 'active'])->latest()->get();
+        $previews = $sessions->map(fn ($session) => [
+            'code' => $session->code,
+            'background' => $session->background ? asset('storage/'.$session->background->path) : null,
+            'strokes' => $session->recordedStrokes->map(fn ($stroke) => [
+                'points' => $stroke->points,
+                'color' => $stroke->color,
+                'size' => $stroke->size,
+            ])->values(),
+        ])->values();
 
-        return view('admin.dashboard', compact('sessions'));
+        return view('admin.dashboard', compact('sessions', 'previews'));
     }
 
     public function deleteSession(int $id)

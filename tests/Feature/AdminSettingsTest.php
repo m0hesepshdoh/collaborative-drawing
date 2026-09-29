@@ -13,6 +13,59 @@ use Tests\TestCase;
 
 class AdminSettingsTest extends TestCase
 {
+    public function test_allow_listed_admin_can_authorize_an_active_session_channel(): void
+    {
+        config(['admin.allowed_ips' => ['127.0.0.1']]);
+        DrawingSession::create([
+            'code' => 'ABC123',
+            'background_id' => null,
+            'status' => 'active',
+        ]);
+
+        $this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+            ->withSession(['admin_authenticated' => true])
+            ->postJson('/broadcasting/auth', [
+                'channel_name' => 'private-session.ABC123',
+                'socket_id' => '123.456',
+            ])
+            ->assertOk()
+            ->assertJsonStructure(['auth']);
+    }
+
+    public function test_admin_outside_the_allow_list_cannot_authorize_a_session_channel(): void
+    {
+        config(['admin.allowed_ips' => []]);
+        DrawingSession::create([
+            'code' => 'ABC123',
+            'background_id' => null,
+            'status' => 'active',
+        ]);
+
+        $this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+            ->withSession(['admin_authenticated' => true])
+            ->postJson('/broadcasting/auth', [
+                'channel_name' => 'private-session.ABC123',
+                'socket_id' => '123.456',
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_sessions_dashboard_renders_a_live_preview_for_each_active_session(): void
+    {
+        DrawingSession::create([
+            'code' => 'ABC123',
+            'background_id' => null,
+            'status' => 'active',
+        ]);
+
+        $this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+            ->withSession(['admin_authenticated' => true])
+            ->get('/admin-panel-xyz')
+            ->assertOk()
+            ->assertSee('data-session-preview="ABC123"', false)
+            ->assertSee('js/admin-session-previews.js');
+    }
+
     public function test_admin_settings_persist_ai_and_wait_durations(): void
     {
         $request = Request::create('/admin/settings', 'POST', [

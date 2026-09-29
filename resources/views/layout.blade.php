@@ -30,6 +30,7 @@
     <div class="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-clay text-ink px-4 py-2 rounded-lg shadow-lg">
         {{ session('message') }}
 </div>@endif @yield('body')
+@yield('scripts')
 </body>
 
 </html>

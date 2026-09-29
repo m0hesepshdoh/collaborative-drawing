@@ -14,6 +14,7 @@
                         <th class="py-2">Code</th>
                         <th>Status</th>
                         <th>Players</th>
+                        <th>Live preview</th>
                         <th>Started</th>
                         <th>Last activity</th>
                         <th>Actions</th>
@@ -30,6 +31,14 @@
                                     @method('DELETE')<button class="text-clay hover:underline">remove</button></form>
                         </div>@endforeach
                         </td>
+                        <td class="py-3">
+                            <div class="w-40 sm:w-48">
+                                <div class="mb-1 text-xs text-slate" data-preview-status="{{ $s->code }}">Connecting…</div>
+                                <canvas data-session-preview="{{ $s->code }}" width="800" height="600"
+                                    class="block aspect-4/3 w-full rounded border border-chalk/20 bg-[#f6f1ea]"
+                                    aria-label="Live drawing preview for session {{ $s->code }}"></canvas>
+                            </div>
+                        </td>
                         <td class="text-slate">{{ $s->created_at }}</td>
                         <td class="text-slate">{{ $s->players->max('last_activity_at') }}</td>
                         <td>
@@ -41,3 +50,16 @@
             </table>
         </div>
 </main>@endsection
+@section('scripts')
+    <script>
+        window.ADMIN_SESSION_PREVIEWS = @json($previews);
+        window.ADMIN_REVERB_CONFIG = {
+            key: @json(env('REVERB_APP_KEY')),
+            host: @json(env('REVERB_HOST', '127.0.0.1')),
+            port: @json((int) env('REVERB_PORT', 8080)),
+            scheme: @json(env('REVERB_SCHEME', 'http')),
+            csrf: @json(csrf_token()),
+        };
+    </script>
+    <script type="module" src="{{ asset('js/admin-session-previews.js') }}"></script>
+@endsection

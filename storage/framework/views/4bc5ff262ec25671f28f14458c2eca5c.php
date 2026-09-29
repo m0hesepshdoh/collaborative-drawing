@@ -31,6 +31,7 @@
         <?php echo e(session('message')); ?>
 
 </div><?php endif; ?> <?php echo $__env->yieldContent('body'); ?>
+<?php echo $__env->yieldContent('scripts'); ?>
 </body>
 
 </html><?php /**PATH /Users/fis006/Downloads/collaborative-drawing/resources/views/layout.blade.php ENDPATH**/ ?>
