@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\SessionController;
+use App\Models\AppSetting;
 use App\Models\DrawingSession;
 use Illuminate\Http\Request;
 use Tests\TestCase;
@@ -71,5 +72,31 @@ class SessionFinishFlowTest extends TestCase
         $this->assertSame('finalized', $response->getData()->state);
         $this->assertTrue($response->getData()->canGenerateAi);
         $this->assertNotNull($session->fresh()->finished_at);
+    }
+
+    public function test_finish_deadline_uses_admin_configured_duration_and_ai_setting(): void
+    {
+        $session = DrawingSession::create([
+            'code' => 'GHI789',
+            'background_id' => null,
+            'status' => 'active',
+        ]);
+        $session->players()->create([
+            'ip_address' => '127.0.0.1',
+            'is_bot' => false,
+            'last_activity_at' => now(),
+            'joined_at' => now(),
+        ]);
+        AppSetting::current()->update([
+            'ai_generation_enabled' => false,
+            'finish_wait_seconds' => 30,
+        ]);
+
+        $request = Request::create('/session/GHI789/finish', 'POST', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+        $response = (new SessionController)->finish($request, 'GHI789');
+
+        $this->assertSame(30, $response->getData()->remainingSeconds);
+        $this->assertFalse($response->getData()->aiEnabled);
+        $this->assertGreaterThan(29, now()->diffInSeconds($session->fresh()->finish_deadline_at, false));
     }
 }

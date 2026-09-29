@@ -11,6 +11,7 @@ const cfg = window.DRAWING_CONFIG,
   aiStatus = document.getElementById("ai-status"),
   aiResultBox = document.getElementById("ai-result"),
   aiImageEl = document.getElementById("ai-image"),
+  downloadDrawingLink = document.getElementById("download-drawing"),
   downloadAiLink = document.getElementById("download-ai"),
   retryAiBtn = document.getElementById("retry-ai"),
   aiErrorEl = document.getElementById("ai-error");
@@ -30,6 +31,9 @@ let bg = null,
     finalized: false,
     aiStarted: false,
     aiAttempted: false,
+    aiEnabled: true,
+    originalDownloadReady: false,
+    originalDownloadUrl: "",
     timerEndsAt: 0,
     lastCanvasDataUrl: "",
     status: "drawing",
@@ -58,6 +62,9 @@ function getRemainingSeconds() {
 
 function applyServerState(serverState) {
   const state = serverState?.state || "drawing";
+  if (typeof serverState?.aiEnabled === "boolean") {
+    finishState.aiEnabled = serverState.aiEnabled;
+  }
   finishState.status = state;
   finishState.localLocked = state === "waiting" && serverState?.finishedByIp === cfg.meIp;
   finishState.remoteLocked = state === "waiting" && serverState?.finishedByIp && serverState?.finishedByIp !== cfg.meIp;
@@ -76,6 +83,9 @@ function applyServerState(serverState) {
 
   if (serverState?.imageUrl) {
     showAiImage(serverState.imageUrl);
+  } else if (state === "finalized" && !finishState.aiEnabled) {
+    finalizeDrawing(false);
+    showFinalDrawingDownload();
   } else if (state === "finalized") {
     finalizeDrawing(Boolean(serverState?.canGenerateAi));
   }
@@ -358,9 +368,6 @@ async function requestFinish() {
       throw new Error(payload?.message || "Unable to finish the drawing.");
     }
     applyServerState(payload);
-    if (payload.state === "finalized") {
-      finalizeDrawing(true);
-    }
   } catch (error) {
     status.textContent = error.message || "Unable to finish.";
     status.className = "text-xs text-red-400";
@@ -385,6 +392,25 @@ function finalizeDrawing(generateAi = false) {
   }
 }
 
+function showFinalDrawingDownload() {
+  aiResultBox.classList.remove("hidden");
+  aiStatus.textContent = "Finished drawing. Save a copy as PNG?";
+  aiImageEl.src = canvas.toDataURL("image/png");
+  aiImageEl.hidden = false;
+  downloadAiLink.classList.add("hidden");
+  retryAiBtn.classList.add("hidden");
+  downloadDrawingLink.classList.remove("hidden");
+  if (finishState.originalDownloadReady) return;
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    if (finishState.originalDownloadUrl) URL.revokeObjectURL(finishState.originalDownloadUrl);
+    finishState.originalDownloadUrl = URL.createObjectURL(blob);
+    finishState.originalDownloadReady = true;
+    downloadDrawingLink.href = finishState.originalDownloadUrl;
+  }, "image/png");
+}
+
 finishBtn.addEventListener("click", requestFinish);
 
 async function exportCanvasAsPngForAi() {
@@ -396,6 +422,7 @@ async function exportCanvasAsPngForAi() {
   aiErrorEl.classList.add("hidden");
   aiErrorEl.textContent = "";
   aiImageEl.hidden = true;
+  downloadDrawingLink.classList.add("hidden");
   downloadAiLink.classList.add("hidden");
   retryAiBtn.classList.add("hidden");
 
@@ -472,6 +499,7 @@ function showAiImage(imageUrl) {
   aiStatus.textContent = "AI finished the drawing";
   aiImageEl.src = imageUrl;
   aiImageEl.hidden = false;
+  downloadDrawingLink.classList.add("hidden");
   downloadAiLink.href = imageUrl;
   downloadAiLink.download = "ai-finished-drawing.png";
   downloadAiLink.classList.remove("hidden");
@@ -535,6 +563,10 @@ async function resetDrawingSession() {
     finishState.finalized = false;
     finishState.aiStarted = false;
     finishState.aiAttempted = false;
+    finishState.originalDownloadReady = false;
+    if (finishState.originalDownloadUrl) URL.revokeObjectURL(finishState.originalDownloadUrl);
+    finishState.originalDownloadUrl = "";
+    downloadDrawingLink.classList.add("hidden");
     finishState.timerEndsAt = 0;
     finishState.status = payload.state || "drawing";
     aiImageEl.hidden = true;

@@ -11,6 +11,8 @@
         href="<?php echo e(route('admin.botPatterns.index')); ?>"
         class="px-3 py-1.5 rounded-lg bg-chalk/10 border border-chalk/20 hover:border-clay transition-colors">Bot
         Patterns</a>
+        <a href="<?php echo e(route('admin.settings')); ?>"
+                class="px-3 py-1.5 rounded-lg bg-chalk/10 border border-chalk/20 hover:border-clay transition-colors">Settings</a>
     <form method="post" action="<?php echo e(route('admin.logout')); ?>" class="ml-auto"><?php echo csrf_field(); ?><button
             class="px-3 py-1.5 rounded-lg bg-clay/20 border border-clay text-chalk hover:bg-clay/30 transition-colors">Logout</button>
     </form>

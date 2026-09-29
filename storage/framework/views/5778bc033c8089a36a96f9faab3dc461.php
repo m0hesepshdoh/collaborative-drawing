@@ -45,8 +45,9 @@
         <div class="border-t border-chalk/10 bg-ink/95 px-4 py-3">
             <div id="ai-result" class="hidden" aria-live="polite">
                 <div id="ai-status" class="mb-2 text-sm text-chalk">Done!</div>
-                <img id="ai-image" class="max-h-[420px] w-full rounded-lg border border-chalk/10 object-contain bg-[#f6f1ea]" alt="AI polished drawing" hidden>
+                <img id="ai-image" class="max-h-105 w-full rounded-lg border border-chalk/10 object-contain bg-[#f6f1ea]" alt="AI polished drawing" hidden>
                 <div class="mt-3 flex gap-2">
+                    <a id="download-drawing" class="hidden rounded border border-chalk/20 bg-chalk/10 px-3 py-2 text-sm text-chalk hover:border-clay" href="#" download="finished-drawing.png">Save drawing as PNG</a>
                     <a id="download-ai" class="hidden rounded border border-chalk/20 bg-chalk/10 px-3 py-2 text-sm text-chalk hover:border-clay" href="#" download="ai-finished-drawing.png">Download PNG</a>
                     <button id="retry-ai" type="button" class="hidden rounded border border-chalk/20 bg-chalk/10 px-3 py-2 text-sm text-chalk hover:border-clay">Retry AI Generation</button>
                 </div>

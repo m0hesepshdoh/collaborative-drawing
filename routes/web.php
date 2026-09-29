@@ -31,6 +31,8 @@ Route::middleware('admin.ip')->prefix($adminPath)->group(function () {
 });
 Route::middleware(['admin.ip','admin.auth'])->prefix($adminPath)->group(function () {
     Route::get('/', [AdminController::class, 'dashboard'])->name('admin.dashboard');
+    Route::get('/settings', [AdminController::class, 'settings'])->name('admin.settings');
+    Route::post('/settings', [AdminController::class, 'updateSettings'])->name('admin.settings.update');
     Route::delete('/session/{id}', [AdminController::class, 'deleteSession'])->name('admin.session.delete');
     Route::delete('/sessions/all', [AdminController::class, 'deleteAllSessions'])->name('admin.sessions.deleteAll');
     Route::delete('/session/{id}/player/{playerId}', [AdminController::class, 'removePlayer'])->name('admin.player.remove');

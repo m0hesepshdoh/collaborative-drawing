@@ -1,0 +1,42 @@
+@extends('layout') @section('body')
+    <main class="mx-auto max-w-3xl p-6">
+        @include('admin.nav')
+        <h1 class="mt-8 font-display text-3xl text-chalk">Session Settings</h1>
+
+        @if ($errors->any())
+            <div class="mt-5 rounded border border-clay bg-clay/10 px-4 py-3 text-sm">
+                {{ $errors->first() }}
+            </div>
+        @endif
+
+        <form method="post" action="{{ route('admin.settings.update') }}" class="mt-6 space-y-5">
+            @csrf
+            <label class="flex items-center gap-3 border-b border-chalk/10 pb-5">
+                <input type="checkbox" name="ai_generation_enabled" value="1"
+                    @checked(old('ai_generation_enabled', $settings->ai_generation_enabled))
+                    class="size-5 accent-clay">
+                <span>
+                    <span class="block text-sm font-medium">Enable AI image generation</span>
+                    <span class="block text-xs text-slate">When off, players can download the finished canvas as PNG.</span>
+                </span>
+            </label>
+
+            <label class="block max-w-xs text-sm">
+                <span class="mb-1 block">Wait for another player to join before adding the bot (seconds)</span>
+                <input type="number" name="bot_wait_seconds" min="1" max="3600" required
+                    value="{{ old('bot_wait_seconds', $settings->bot_wait_seconds) }}"
+                    class="w-full rounded border border-chalk/20 bg-chalk/10 px-3 py-2 text-chalk">
+            </label>
+
+            <label class="block max-w-xs text-sm">
+                <span class="mb-1 block">Time for the second player to finish (seconds)</span>
+                <input type="number" name="finish_wait_seconds" min="10" max="3600" required
+                    value="{{ old('finish_wait_seconds', $settings->finish_wait_seconds) }}"
+                    class="w-full rounded border border-chalk/20 bg-chalk/10 px-3 py-2 text-chalk">
+            </label>
+
+            <button type="submit"
+                class="rounded border border-clay bg-clay px-4 py-2 font-medium text-ink hover:bg-clay/90">Save settings</button>
+        </form>
+    </main>
+@endsection

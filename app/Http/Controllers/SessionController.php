@@ -9,6 +9,7 @@ use App\Events\PlayerLeft;
 use App\Events\StrokeRecorded;
 use App\Jobs\BotDrawJob;
 use App\Jobs\BotJoinJob;
+use App\Models\AppSetting;
 use App\Models\Background;
 use App\Models\DrawingSession;
 use App\Models\Player;
@@ -17,6 +18,7 @@ use App\Models\Report;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class SessionController extends Controller
@@ -46,7 +48,7 @@ class SessionController extends Controller
         });
         event(new PlayerJoined($s->code, $r->ip()));
         if ($data['bot_after_timeout'] ?? false) {
-            BotJoinJob::dispatch($s->id)->delay(now()->addSeconds(60));
+            BotJoinJob::dispatch($s->id)->delay(now()->addSeconds(AppSetting::current()->bot_wait_seconds));
         }
 
         return redirect()->route('session.show', $s->code);
@@ -111,6 +113,8 @@ class SessionController extends Controller
             $deadline = null;
         }
 
+        $settings = AppSetting::current();
+
         return response()->json([
             'state' => $s->finish_state ?? 'drawing',
             'remainingSeconds' => $deadline ? max(0, now()->diffInSeconds($deadline, false)) : 0,
@@ -118,7 +122,9 @@ class SessionController extends Controller
             'deadlineAt' => $deadline?->toIso8601String(),
             'finishedAt' => $s->finished_at,
             'imageUrl' => $s->ai_image_url,
-            'canGenerateAi' => $s->finish_state === 'finalized'
+            'aiEnabled' => $settings->ai_generation_enabled,
+            'canGenerateAi' => $settings->ai_generation_enabled
+                && $s->finish_state === 'finalized'
                 && ! $s->ai_image_url
                 && $s->finished_by_ip === $r->ip(),
         ]);
@@ -195,6 +201,8 @@ class SessionController extends Controller
         $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
         $p = $this->activeHuman($s, $r->ip());
         abort_unless($p, 403);
+        $settings = AppSetting::current();
+        $finishWaitSeconds = $settings->finish_wait_seconds;
 
         $state = $s->finish_state ?? 'drawing';
 
@@ -204,6 +212,8 @@ class SessionController extends Controller
                 'remainingSeconds' => 0,
                 'finishedByIp' => $s->finished_by_ip,
                 'finishedAt' => $s->finished_at,
+                'aiEnabled' => $settings->ai_generation_enabled,
+                'canGenerateAi' => $settings->ai_generation_enabled && ! $s->ai_image_url && $s->finished_by_ip === $r->ip(),
             ]);
         }
 
@@ -220,6 +230,8 @@ class SessionController extends Controller
                 'remainingSeconds' => 0,
                 'finishedByIp' => $s->finished_by_ip,
                 'finishedAt' => $s->finished_at,
+                'aiEnabled' => $settings->ai_generation_enabled,
+                'canGenerateAi' => $settings->ai_generation_enabled && ! $s->ai_image_url && $s->finished_by_ip === $r->ip(),
             ]);
         }
 
@@ -228,9 +240,11 @@ class SessionController extends Controller
             if ($s->finished_by_ip === $r->ip()) {
                 return response()->json([
                     'state' => 'waiting',
-                    'remainingSeconds' => $deadline ? max(0, $deadline->diffInSeconds(now(), false)) : 120,
+                    'remainingSeconds' => $deadline ? max(0, now()->diffInSeconds($deadline, false)) : $finishWaitSeconds,
                     'finishedByIp' => $s->finished_by_ip,
                     'deadlineAt' => $deadline?->toIso8601String(),
+                    'aiEnabled' => $settings->ai_generation_enabled,
+                    'canGenerateAi' => false,
                 ]);
             }
 
@@ -241,16 +255,39 @@ class SessionController extends Controller
                 'remainingSeconds' => 0,
                 'finishedByIp' => $s->finished_by_ip,
                 'finishedAt' => $s->finished_at,
+                'aiEnabled' => $settings->ai_generation_enabled,
+                'canGenerateAi' => $settings->ai_generation_enabled && ! $s->ai_image_url && $s->finished_by_ip === $r->ip(),
             ]);
         }
 
-        $this->lockSessionForFinish($s, $r->ip());
+        $hasOtherParticipant = $s->players()
+            ->whereNull('left_at')
+            ->where('id', '!=', $p->id)
+            ->exists();
+
+        if (! $hasOtherParticipant) {
+            $this->finalizeSession($s, $r->ip());
+            $s->refresh();
+
+            return response()->json([
+                'state' => 'finalized',
+                'remainingSeconds' => 0,
+                'finishedByIp' => $s->finished_by_ip,
+                'finishedAt' => $s->finished_at,
+                'aiEnabled' => $settings->ai_generation_enabled,
+                'canGenerateAi' => $settings->ai_generation_enabled && ! $s->ai_image_url,
+            ]);
+        }
+
+        $this->lockSessionForFinish($s, $r->ip(), $finishWaitSeconds);
 
         return response()->json([
             'state' => 'waiting',
-            'remainingSeconds' => 120,
+            'remainingSeconds' => $finishWaitSeconds,
             'finishedByIp' => $r->ip(),
-            'deadlineAt' => now()->addMinutes(2)->toIso8601String(),
+            'deadlineAt' => now()->addSeconds($finishWaitSeconds)->toIso8601String(),
+            'aiEnabled' => $settings->ai_generation_enabled,
+            'canGenerateAi' => false,
         ]);
     }
 
@@ -276,13 +313,14 @@ class SessionController extends Controller
     {
         $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
         abort_unless($this->activeHuman($s, $r->ip()), 403);
+        abort_unless(AppSetting::current()->ai_generation_enabled, 409, 'AI image generation is disabled by the administrator.');
 
         $data = $r->validate([
             'image_data_url' => ['required', 'string'],
             'prompt' => ['nullable', 'string'],
         ]);
 
-        $apiKey = env('SENSENOVA_API_KEY');
+        $apiKey = config('services.sensenova.api_key');
         if (blank($apiKey)) {
             return response()->json([
                 'success' => false,
@@ -304,6 +342,7 @@ class SessionController extends Controller
                 'n' => 1,
                 'watermark' => false,
                 'response_format' => 'url',
+                'output_format' => 'png',
             ]);
 
             if (! $response->successful()) {
@@ -332,6 +371,18 @@ class SessionController extends Controller
                 ], 500);
             }
 
+            $imageResponse = Http::timeout(30)->get($imageUrl);
+            if (! $imageResponse->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'SenseNova generated the image, but it could not be saved to the application.',
+                ], 502);
+            }
+
+            $imagePath = 'ai-results/'.$s->code.'/'.Str::uuid().'.png';
+            Storage::disk('public')->put($imagePath, $imageResponse->body());
+            $imageUrl = '/storage/'.$imagePath;
+
             $s->update([
                 'ai_image_url' => $imageUrl,
                 'ai_prompt' => $prompt,
@@ -350,12 +401,12 @@ class SessionController extends Controller
         }
     }
 
-    protected function lockSessionForFinish(DrawingSession $s, string $ip): void
+    protected function lockSessionForFinish(DrawingSession $s, string $ip, int $waitSeconds): void
     {
         $s->update([
             'finish_state' => 'waiting',
             'finished_by_ip' => $ip,
-            'finish_deadline_at' => now()->addMinutes(2),
+            'finish_deadline_at' => now()->addSeconds($waitSeconds),
             'finished_at' => null,
         ]);
     }

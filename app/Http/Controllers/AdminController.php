@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Events\PlayerKicked;
 use App\Models\Ban;
+use App\Models\AppSetting;
 use App\Models\DrawingSession;
 use App\Models\Player;
 use App\Models\Report;
@@ -11,6 +12,26 @@ use Illuminate\Http\Request;
 
 class AdminController extends Controller
 {
+    public function settings()
+    {
+        return view('admin.settings', ['settings' => AppSetting::current()]);
+    }
+
+    public function updateSettings(Request $r)
+    {
+        $data = $r->validate([
+            'bot_wait_seconds' => ['required', 'integer', 'min:1', 'max:3600'],
+            'finish_wait_seconds' => ['required', 'integer', 'min:10', 'max:3600'],
+        ]);
+
+        AppSetting::current()->update([
+            ...$data,
+            'ai_generation_enabled' => $r->boolean('ai_generation_enabled'),
+        ]);
+
+        return back()->with('message', 'Settings saved.');
+    }
+
     public function dashboard()
     {
         $sessions = DrawingSession::with(['players' => fn ($q) => $q->whereNull('left_at')])->whereIn('status', ['waiting', 'active'])->latest()->get();
