@@ -1,3 +1,24 @@
 <?php
-use Illuminate\Database\Migrations\Migration; use Illuminate\Database\Schema\Blueprint; use Illuminate\Support\Facades\Schema;
-return new class extends Migration { public function up(): void { Schema::create('sessions', function(Blueprint $t){$t->id();$t->string('code',6)->unique();$t->foreignId('background_id')->nullable()->constrained('backgrounds')->nullOnDelete();$t->enum('status',['waiting','active','ended'])->default('waiting');$t->timestamps();}); } public function down(): void {Schema::dropIfExists('sessions');}};
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('sessions', function (Blueprint $t) {
+            $t->id();
+            $t->string('code', 6)->unique();
+            $t->foreignId('background_id')->nullable()->constrained('backgrounds')->nullOnDelete();
+            $t->enum('status', ['waiting', 'active', 'ended'])->default('waiting');
+            $t->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('sessions');
+    }
+};
