@@ -14,3 +14,4 @@ Schedule::call(function () {
     });
     \App\Models\DrawingSession::where('status','ended')->where('updated_at','<',now()->subMinutes(5))->delete();
 })->everyMinute();
+Schedule::command('bench:health')->everyMinute();

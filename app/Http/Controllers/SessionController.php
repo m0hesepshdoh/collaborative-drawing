@@ -12,6 +12,7 @@ use App\Jobs\BotJoinJob;
 use App\Models\AppSetting;
 use App\Models\Background;
 use App\Models\DrawingSession;
+use App\Models\Measurement;
 use App\Models\Player;
 use App\Models\RecordedStroke;
 use App\Models\Report;
@@ -35,6 +36,12 @@ class SessionController extends Controller
     private function activeHuman(DrawingSession $s, string $ip): ?Player
     {
         return $s->players()->where('ip_address', $ip)->where('is_bot', false)->whereNull('left_at')->first();
+    }
+
+    private function benchmarkAuthorized(Request $r, DrawingSession $s): bool
+    {
+        return $r->header('X-Benchmark-Secret') === env('BENCH_SECRET')
+            && DrawingSession::whereKey($s->id)->exists();
     }
 
     public function create(Request $r)
@@ -172,7 +179,7 @@ class SessionController extends Controller
     public function recordStroke(Request $r, string $code)
     {
         $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
-        abort_unless($this->activeHuman($s, $r->ip()), 403);
+        abort_unless($this->activeHuman($s, $r->ip()) || $this->benchmarkAuthorized($r, $s), 403);
         $d = $r->validate(['points' => 'required|array|min:2|max:1000', 'points.*.x' => 'required|numeric|min:0|max:800', 'points.*.y' => 'required|numeric|min:0|max:600', 'color' => ['required', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'], 'size' => 'required|integer|min:1|max:40', 'drawn_at' => 'nullable|date', 'client_stroke_id' => 'required|string|max:100']);
         $stroke = $s->recordedStrokes()->create(['player_ip' => $r->ip(), 'points' => $d['points'], 'color' => $d['color'], 'size' => $d['size'], 'drawn_at' => $d['drawn_at'] ?? now()]);
         broadcast(new StrokeRecorded($s->code, [
@@ -192,6 +199,50 @@ class SessionController extends Controller
         $p = $this->activeHuman($s, $r->ip());
         abort_unless($p, 403);
         $p->update(['last_activity_at' => now()]);
+
+        return response()->noContent();
+    }
+
+    public function benchmarkTime(Request $r, string $code)
+    {
+        abort_unless($r->header('X-Benchmark-Secret') === env('BENCH_SECRET'), 403);
+        abort_unless(DrawingSession::where('code', strtoupper($code))->exists(), 404);
+
+        return response()->json(['timestamp' => now()->getTimestampMs(), 'code' => strtoupper($code)]);
+    }
+
+    public function broadcastBenchmarkStroke(Request $r, string $code)
+    {
+        abort_unless($r->header('X-Benchmark-Secret') === env('BENCH_SECRET'), 403);
+        abort_unless(DrawingSession::where('code', strtoupper($code))->exists(), 404);
+        $data = $r->validate(['id' => ['required', 'string'], 'sent_at' => ['required', 'integer'], 'stroke' => ['required', 'array']]);
+        broadcast(new \App\Events\BenchmarkStroke($code, $data))->toOthers();
+
+        return response()->noContent();
+    }
+
+    public function storeMeasurements(Request $r, string $code)
+    {
+        $data = $r->validate([
+            'events' => ['required', 'array', 'max:1000'],
+            'events.*.event_type' => ['required', 'string', 'max:80'],
+            'events.*.client_id' => ['required', 'uuid'],
+            'events.*.value_ms' => ['nullable', 'numeric', 'min:0'],
+            'events.*.meta' => ['nullable', 'array'],
+        ]);
+        $session = DrawingSession::where('code', strtoupper($code))->firstOrFail();
+        abort_unless($this->activeHuman($session, $r->ip()) || $this->benchmarkAuthorized($r, $session), 403);
+
+        DB::transaction(function () use ($data, $session) {
+            Measurement::query()->insert(array_map(fn ($event) => [
+                'session_code' => $session->code,
+                'client_id' => $event['client_id'],
+                'event_type' => $event['event_type'],
+                'value_ms' => $event['value_ms'] ?? null,
+                'meta' => $event['meta'] ?? null,
+                'created_at' => now(),
+            ], $data['events']));
+        });
 
         return response()->noContent();
     }
@@ -312,7 +363,7 @@ class SessionController extends Controller
     public function generateAi(Request $r, string $code)
     {
         $s = DrawingSession::where('code', strtoupper($code))->firstOrFail();
-        abort_unless($this->activeHuman($s, $r->ip()), 403);
+        abort_unless($this->activeHuman($s, $r->ip()) || $this->benchmarkAuthorized($r, $s), 403);
         abort_unless(AppSetting::current()->ai_generation_enabled, 409, 'AI image generation is disabled by the administrator.');
 
         $data = $r->validate([
@@ -331,7 +382,9 @@ class SessionController extends Controller
         $prompt = $data['prompt'] ?? 'This is a rough hand-drawn sketch made collaboratively by two people. Turn it into a polished, finished illustration. Preserve every drawn shape, object, and layout exactly as it appears — do not add, remove, or move any elements. Only clean up the lines, add color, shading, and texture to make it look like a professional piece of art. Keep the composition and proportions identical to the sketch.';
 
         try {
-            $response = Http::withHeaders([
+            set_time_limit(120);
+
+            $response = Http::connectTimeout(10)->timeout(90)->withHeaders([
                 'Authorization' => 'Bearer '.$apiKey,
                 'Content-Type' => 'application/json',
             ])->post('https://token.sensenova.ai/v1/images/edits', [
@@ -371,7 +424,7 @@ class SessionController extends Controller
                 ], 500);
             }
 
-            $imageResponse = Http::timeout(30)->get($imageUrl);
+            $imageResponse = Http::connectTimeout(10)->timeout(20)->get($imageUrl);
             if (! $imageResponse->successful()) {
                 return response()->json([
                     'success' => false,
@@ -393,6 +446,11 @@ class SessionController extends Controller
                 'image_url' => $imageUrl,
                 'state' => 'done',
             ]);
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'The AI provider or generated image could not be reached before the request timed out. Please retry.',
+            ], 502);
         } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,

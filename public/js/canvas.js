@@ -42,6 +42,47 @@ let bg = null,
 const logical = { w: 800, h: 600 };
 let strokes = [...(cfg.initialStrokes || [])];
 
+// Measurement instrumentation is opt-in and remains entirely in memory until manually uploaded.
+const measureEnabled = window.__MEASURE__ === true;
+const measurements = [];
+
+// Create a UUID even in browsers without crypto.randomUUID().
+function createClientId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    return (character === "x" ? random : (random & 0x3) | 0x8).toString(16);
+  });
+}
+
+const clientId = sessionStorage.getItem("measure-client-id") || createClientId();
+sessionStorage.setItem("measure-client-id", clientId);
+window.__measurements__ = measurements;
+
+// Every added measurement block is explicitly marked for auditability.
+function measure(eventType, valueMs, meta = {}) {
+  if (!measureEnabled) return;
+  measurements.push({
+    event_type: eventType,
+    client_id: meta.clientId || clientId,
+    value_ms: valueMs,
+    meta: { ...meta, clientId: undefined },
+    created_at: new Date().toISOString(),
+  });
+}
+
+window.dumpMeasurements = () => JSON.stringify(measurements);
+window.clearMeasurements = () => measurements.splice(0, measurements.length);
+
+function measureEvent(eventType, meta = {}) {
+  const start = performance.now();
+  measure(`${eventType}_start`, 0, meta);
+  return {
+    start,
+    finish: (extra = {}) => measure(`${eventType}_end`, performance.now() - start, { ...meta, ...extra }),
+  };
+}
+
 function leaveToLanding(message) {
   status.textContent = message;
   setTimeout(() => (location.href = cfg.landingUrl || "/"), 900);
@@ -215,11 +256,32 @@ const scheme = cfg.reverb.scheme,
     auth: { headers: { "X-CSRF-TOKEN": cfg.csrf, Accept: "application/json" } },
   });
 const channel = echo.private("session." + cfg.code);
+const bindEchoLifecycle = (eventName, handler) => {
+  if (typeof echo.on === "function") {
+    echo.on(eventName, handler);
+    return;
+  }
+
+  const connection = echo?.connector?.pusher?.connection;
+  if (connection && typeof connection.bind === "function") {
+    connection.bind(eventName, handler);
+  }
+};
+// Reconnect timing is measured at Echo's lifecycle boundaries.
+bindEchoLifecycle("connecting", () => measure("reconnect_start", undefined, { clientId, phase: "connecting" }));
+bindEchoLifecycle("connected", () => measure("reconnect_end", undefined, { clientId, phase: "connected" }));
+bindEchoLifecycle("disconnected", () => measure("reconnect_end", undefined, { clientId, phase: "disconnected" }));
 channel
   .subscribed(() => (status.textContent = "Connected"))
   .error(() => (status.textContent = "WebSocket unavailable"));
 channel
   .listenForWhisper("stroke", (stroke) => {
+    const received = performance.now();
+    measure("stroke_receive", received, {
+      senderId: stroke.senderId,
+      sentAt: stroke.sentAt,
+      receiveDelayMs: Math.max(0, Date.now() - Number(stroke.sentAt || Date.now())),
+    });
     liveStrokes.push(stroke);
     drawStroke(stroke);
   })
@@ -272,7 +334,10 @@ canvas.addEventListener("pointermove", (e) => {
   addStroke(s);
   const now = Date.now();
   if (now - lastSend > 50) {
-    channel.whisper("stroke", s);
+    const sentAt = Date.now();
+    const measurement = measureEvent("stroke_send", { clientId, sentAt });
+    channel.whisper("stroke", { ...s, senderId: clientId, sentAt });
+    measurement.finish({ clientId, sentAt });
     lastSend = now;
   }
 });
@@ -460,8 +525,10 @@ function showAiError(message) {
 }
 
 async function requestSenseNovaImage() {
+  const measurement = measureEvent("ai_request", { clientId });
+  let response;
   try {
-    const response = await fetch(`/session/${cfg.code}/generate-ai`, {
+    response = await fetch(`/session/${cfg.code}/generate-ai`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -490,6 +557,7 @@ async function requestSenseNovaImage() {
     showAiError(error.message || "SenseNova image generation failed.");
     finishState.aiStarted = false;
   } finally {
+    measurement.finish({ status: response?.ok ? "ok" : "error" });
     finishState.aiStarted = false;
     updateStatusText();
   }
@@ -597,14 +665,29 @@ newDrawingBtn.addEventListener("click", async () => {
 setInterval(async () => {
   if (!dirtyActivity) return;
   dirtyActivity = false;
+  const measurement = measureEvent("heartbeat_send", { clientId });
   try {
     const res = await fetch(`/session/${cfg.code}/heartbeat`, {
       method: "POST",
       headers: { "X-CSRF-TOKEN": cfg.csrf, Accept: "application/json" },
     });
     checkAuth(res);
-  } catch {}
+    measure("heartbeat_ack", performance.now() - measurement.start, { clientId, status: res.ok ? "ok" : "error" });
+  } catch {
+    measure("heartbeat_ack", performance.now() - measurement.start, { clientId, status: "error" });
+  }
 }, 60000);
+
+window.uploadMeasurements = async function (code) {
+  if (!measurements.length) return false;
+  const response = await fetch(`/session/${code}/measurements`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": cfg.csrf },
+    body: JSON.stringify({ events: measurements }),
+  });
+  if (!response.ok) throw new Error("Unable to upload measurements.");
+  return true;
+};
 
 window.addEventListener("beforeunload", () =>
   echo.leave("session." + cfg.code),

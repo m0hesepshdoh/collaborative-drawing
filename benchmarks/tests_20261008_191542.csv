@@ -1,0 +1,7 @@
+suite,tests,assertions,failures,errors,time_s
+/Users/fis006/Downloads/collaborative-drawing/phpunit.xml,13,44,0,0,0.385399
+Feature,13,44,0,0,0.385399
+"Tests\Feature\AdminSettingsTest",6,12,0,0,0.246503
+"Tests\Feature\SessionAiGenerationTest",1,7,0,0,0.047296
+"Tests\Feature\SessionFinishFlowTest",3,15,0,0,0.045740
+"Tests\Feature\SessionStrokePersistenceTest",3,10,0,0,0.045861

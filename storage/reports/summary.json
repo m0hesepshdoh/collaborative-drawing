@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-10-09T23:13:07.148Z",
+  "benchmark_files": 6,
+  "latency_samples": 0,
+  "latency_min_ms": null,
+  "latency_p50_ms": null,
+  "latency_p95_ms": null,
+  "latency_max_ms": null,
+  "throughput_rows": 4,
+  "throughput_mean_per_s": 66.1336741474583,
+  "reconnect_rows": 3,
+  "bot_rows": 0,
+  "ai_rows": 50,
+  "ai_successes": 0
+}

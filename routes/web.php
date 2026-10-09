@@ -1,11 +1,18 @@
 <?php
-use App\Http\Controllers\{AdminAuthController,AdminController,BackgroundController,BotPatternController,LandingController,SessionController};
+use App\Http\Controllers\{AdminAuthController,AdminController,BackgroundController,BenchController,BotPatternController,LandingController,SessionController};
 use Illuminate\Support\Facades\{Broadcast,Route};
 
 require base_path('routes/channels.php');
 
 Route::get('/', [LandingController::class, 'index'])->name('landing');
-Route::post('/broadcasting/auth', function () { return Broadcast::auth(request()); })->middleware('session.broadcast');
+Route::post('/bench/timestamp', [BenchController::class, 'timestamp'])->name('bench.timestamp');
+Route::post('/broadcasting/auth', function () {
+    if (request()->hasHeader('X-Benchmark-Secret')) {
+        abort_unless(request()->header('X-Benchmark-Secret') === env('BENCH_SECRET'), 403);
+    }
+
+    return Broadcast::auth(request());
+})->middleware('session.broadcast');
 
 Route::middleware('not.banned')->group(function () {
     Route::post('/session/create', [SessionController::class, 'create'])->name('session.create');
@@ -17,6 +24,7 @@ Route::middleware('not.banned')->group(function () {
     Route::post('/session/{code}/clear', [SessionController::class, 'clear'])->name('session.clear');
     Route::post('/session/{code}/record-stroke', [SessionController::class, 'recordStroke'])->name('session.recordStroke');
     Route::post('/session/{code}/heartbeat', [SessionController::class, 'heartbeat'])->name('session.heartbeat');
+    Route::post('/session/{code}/measurements', [SessionController::class, 'storeMeasurements'])->name('session.measurements');
     Route::post('/session/{code}/finish', [SessionController::class, 'finish'])->name('session.finish');
     Route::get('/session/{code}/state', [SessionController::class, 'state'])->name('session.state');
     Route::post('/session/{code}/reset', [SessionController::class, 'resetSession'])->name('session.reset');
@@ -40,6 +48,9 @@ Route::middleware(['admin.ip','admin.auth'])->prefix($adminPath)->group(function
     Route::post('/backgrounds', [BackgroundController::class, 'store'])->name('backgrounds.store');
     Route::delete('/backgrounds/{background}', [BackgroundController::class, 'destroy'])->name('backgrounds.destroy');
     Route::get('/reports', [AdminController::class, 'reports'])->name('admin.reports');
+    Route::get('/measurements', [AdminController::class, 'measurements'])->name('admin.measurements');
+    Route::get('/measurements/export', [AdminController::class, 'exportMeasurements'])->name('admin.measurements.export');
+    Route::get('/health', [AdminController::class, 'health'])->name('admin.health');
     Route::get('/bans', [AdminController::class, 'bans'])->name('admin.bans');
     Route::post('/ban', [AdminController::class, 'ban'])->name('admin.ban');
     Route::delete('/ban/{id}', [AdminController::class, 'unban'])->name('admin.unban');

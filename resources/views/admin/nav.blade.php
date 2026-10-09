@@ -13,6 +13,8 @@
         Patterns</a>
         <a href="{{ route('admin.settings') }}"
                 class="px-3 py-1.5 rounded-lg bg-chalk/10 border border-chalk/20 hover:border-clay transition-colors">Settings</a>
+        <a href="{{ route('admin.measurements') }}"
+                class="px-3 py-1.5 rounded-lg bg-chalk/10 border border-chalk/20 hover:border-clay transition-colors">Measurements</a>
     <form method="post" action="{{ route('admin.logout') }}" class="ml-auto">@csrf<button
             class="px-3 py-1.5 rounded-lg bg-clay/20 border border-clay text-chalk hover:bg-clay/30 transition-colors">Logout</button>
     </form>

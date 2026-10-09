@@ -74,7 +74,7 @@ class SessionFinishFlowTest extends TestCase
         $this->assertNotNull($session->fresh()->finished_at);
     }
 
-    public function test_finish_deadline_uses_admin_configured_duration_and_ai_setting(): void
+    public function test_single_participant_finishes_immediately_without_waiting_for_deadline(): void
     {
         $session = DrawingSession::create([
             'code' => 'GHI789',
@@ -95,8 +95,11 @@ class SessionFinishFlowTest extends TestCase
         $request = Request::create('/session/GHI789/finish', 'POST', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
         $response = (new SessionController)->finish($request, 'GHI789');
 
-        $this->assertSame(30, $response->getData()->remainingSeconds);
+        $this->assertSame('finalized', $response->getData()->state);
+        $this->assertSame(0, $response->getData()->remainingSeconds);
         $this->assertFalse($response->getData()->aiEnabled);
-        $this->assertGreaterThan(29, now()->diffInSeconds($session->fresh()->finish_deadline_at, false));
+        $this->assertFalse($response->getData()->canGenerateAi);
+        $this->assertNull($session->fresh()->finish_deadline_at);
+        $this->assertNotNull($session->fresh()->finished_at);
     }
 }

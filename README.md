@@ -15,6 +15,7 @@ A browser-based collaborative drawing application for two human participants. It
 - [HTTP API](#http-api)
 - [Authentication and Security](#authentication-and-security)
 - [Testing and Quality Assurance](#testing-and-quality-assurance)
+- [Performance Benchmark Suite](#performance-benchmark-suite)
 - [AI Integration](#ai-integration)
 - [Installation and Deployment](#installation-and-deployment)
 
@@ -172,7 +173,11 @@ Apply Laravel Pint formatting when needed:
 ./vendor/bin/pint
 ```
 
-The Composer manifest does not define a separate test or lint script. The package manifest has no frontend test/build scripts; the interactive canvas client is served from `public/js/canvas.js`.
+Run `composer test:report` to generate JUnit XML and a CSV summary. The performance suite is documented separately in [benchmarks/README.md](benchmarks/README.md).
+
+## Performance Benchmark Suite
+
+The opt-in benchmark suite measures WebSocket latency, stroke throughput, reconnect behavior, bot replay, AI request latency, query overhead, and health observations without changing normal application features. See [benchmarks/README.md](benchmarks/README.md) for setup, commands, and reproducibility guidance.
 
 ## AI Integration
 

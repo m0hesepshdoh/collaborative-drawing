@@ -6,9 +6,12 @@ use App\Events\PlayerKicked;
 use App\Models\Ban;
 use App\Models\AppSetting;
 use App\Models\DrawingSession;
+use App\Models\Measurement;
 use App\Models\Player;
 use App\Models\Report;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Response;
 
 class AdminController extends Controller
 {
@@ -30,6 +33,41 @@ class AdminController extends Controller
         ]);
 
         return back()->with('message', 'Settings saved.');
+    }
+
+    public function measurements()
+    {
+        $measurements = Measurement::latest('created_at')->get()->groupBy('event_type');
+
+        return view('admin.measurements', compact('measurements'));
+    }
+
+    public function exportMeasurements()
+    {
+        $filename = 'measurements_'.now()->format('Ymd_His').'.csv';
+        $response = Response::stream(function () {
+            $handle = fopen('php://output', 'wb');
+            fputcsv($handle, ['session_code', 'client_id', 'event_type', 'value_ms', 'meta_json', 'created_at']);
+            Measurement::query()->orderBy('created_at')->chunkById(500, function ($rows) use ($handle) {
+                foreach ($rows as $row) {
+                    fputcsv($handle, [$row->session_code, $row->client_id, $row->event_type, $row->value_ms, json_encode($row->meta), $row->created_at]);
+                }
+            });
+            fclose($handle);
+        }, 200, ['Content-Type' => 'text/csv; charset=UTF-8', 'Content-Disposition' => "attachment; filename={$filename}"]);
+
+        return $response;
+    }
+
+    public function health()
+    {
+        $databaseSize = DB::selectOne('SELECT SUM(data_length + index_length) AS bytes FROM information_schema.tables WHERE table_schema = DATABASE()')?->bytes ?? 0;
+
+        return response()->json([
+            'memory_get_peak_usage' => memory_get_peak_usage(true),
+            'memory_get_usage' => memory_get_usage(true),
+            'database_size_bytes' => (int) $databaseSize,
+        ]);
     }
 
     public function dashboard()
