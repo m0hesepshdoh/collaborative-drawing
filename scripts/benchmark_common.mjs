@@ -119,7 +119,7 @@ const extractCsrfToken = (html, jar) => {
 };
 
 // Establish a Laravel session and join the benchmark session before channel auth.
-const establishSession = async ({ url, code }) => {
+export const establishBenchmarkSession = async ({ url, code }) => {
   const jar = new Map();
   const rootResponse = await fetchWithCookies(new URL("/", url), {}, jar);
   const rootHtml = await rootResponse.text();
@@ -138,11 +138,11 @@ const establishSession = async ({ url, code }) => {
   const joinHtml = await joinResponse.text();
   csrfToken = extractCsrfToken(joinHtml, jar) ?? csrfToken;
   if (!joinResponse.ok) throw new Error(`Session join failed: ${joinResponse.status} ${joinHtml.slice(0, 200)}`);
-  return { jar, csrfToken };
+  return { jar, csrfToken, cookies: cookieHeader(jar) };
 };
 
 export const connectSocket = async ({ url, code, appKey }) => {
-  const { jar, csrfToken } = await establishSession({ url, code });
+  const { jar, csrfToken } = await establishBenchmarkSession({ url, code });
   const httpUrl = new URL(url);
   const scheme = process.env.REVERB_SCHEME ?? httpUrl.protocol.slice(0, -1);
   const socketProtocol = scheme === "https" ? "wss:" : "ws:";

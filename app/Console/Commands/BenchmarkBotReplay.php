@@ -1,3 +1,5 @@
+<?php
+
 // Generates a bot replay accuracy report from approved stored stroke patterns.
 namespace App\Console\Commands;
 
@@ -28,14 +30,16 @@ class BenchmarkBotReplay extends Command
             $lengthDiff = $source->map(fn ($stroke) => $this->strokeLength($stroke))->average() - collect($replay)->map(fn ($stroke) => $this->strokeLength($stroke))->average();
             $rows[] = [
                 'pattern_id' => $pattern->id,
-                'strokes' => $pattern->strokes->count(),
+                'strokes' => $source->count(),
                 'cosine_sim' => round($cosine, 6),
                 'hausdorff' => round($hausdorff, 6),
                 'mean_length_diff' => round($lengthDiff, 6),
             ];
         }
         $path = base_path('benchmarks/bot_replay_'.now()->format('Ymd_His').'.csv');
-        mkdir(dirname($path), 0777, true);
+        if (! is_dir(dirname($path))) {
+            mkdir(dirname($path), 0777, true);
+        }
         $handle = fopen($path, 'wb');
         fputcsv($handle, ['pattern_id', 'strokes', 'cosine_sim', 'hausdorff', 'mean_length_diff']);
         foreach ($rows as $row) fputcsv($handle, $row);
@@ -45,8 +49,8 @@ class BenchmarkBotReplay extends Command
 
     private function cosineSimilarity($left, $right): float
     {
-        $left = $left->values();
-        $right = $right->values();
+        $left = $left->flatten()->values();
+        $right = $right->flatten()->values();
         $dot = $left->zip($right)->sum(fn ($pair) => $pair[0] * $pair[1]);
         $denominator = sqrt($left->sum(fn ($value) => $value * $value)) * sqrt($right->sum(fn ($value) => $value * $value));
         return $denominator ? $dot / $denominator : 0.0;

@@ -1,0 +1,4 @@
+drop_seconds,reconnect_ms,resubscribe_ms,success
+5,5092,1,true
+10,10087,0,true
+30,30095,0,true

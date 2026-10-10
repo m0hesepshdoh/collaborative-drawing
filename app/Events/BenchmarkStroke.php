@@ -3,9 +3,9 @@
 namespace App\Events;
 
 use Illuminate\Broadcasting\InteractsWithSockets;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 
-class BenchmarkStroke implements ShouldBroadcast
+class BenchmarkStroke implements ShouldBroadcastNow
 {
     use InteractsWithSockets;
 

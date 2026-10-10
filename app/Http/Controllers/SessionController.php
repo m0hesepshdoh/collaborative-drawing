@@ -19,6 +19,7 @@ use App\Models\Report;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -400,6 +401,10 @@ class SessionController extends Controller
 
             if (! $response->successful()) {
                 $status = $response->status();
+                Log::warning('SenseNova image edit request failed.', [
+                    'status' => $status,
+                    'response_body' => $response->body(),
+                ]);
                 $message = $response->json('error.message') ?? $response->json('message');
 
                 if ($status === 401) {
@@ -412,6 +417,7 @@ class SessionController extends Controller
                     'success' => false,
                     'message' => $message ?? 'SenseNova request failed.',
                     'provider_status' => $status,
+                    'provider_error' => $response->body(),
                 ], 502);
             }
 

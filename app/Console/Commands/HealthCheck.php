@@ -1,3 +1,5 @@
+<?php
+
 // Runs a periodic application health report for benchmark and deployment diagnostics.
 namespace App\Console\Commands;
 

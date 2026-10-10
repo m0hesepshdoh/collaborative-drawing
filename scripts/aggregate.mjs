@@ -68,11 +68,17 @@ const summary = {
   bot_rows: bot.length,
   ai_rows: ai.length,
   ai_successes: ai.filter((row) => row.success === 'true').length,
+  ai_skipped: ai.filter((row) => row.status === 'skipped' || row.success === 'skipped').length,
+  ai_attempted: ai.filter((row) => row.status !== 'skipped' && row.success !== 'skipped').length,
+  ai_success_rate: (() => {
+    const attempted = ai.filter((row) => row.status !== 'skipped' && row.success !== 'skipped');
+    return attempted.length ? attempted.filter((row) => row.success === 'true').length / attempted.length : null;
+  })(),
 };
 const output = resolve(root, '..', 'storage', 'reports');
 mkdirSync(output, { recursive: true });
 const jsonPath = resolve(output, 'summary.json');
 const markdownPath = resolve(output, 'summary.md');
 writeFileSync(jsonPath, JSON.stringify(summary, null, 2) + '\n');
-writeFileSync(markdownPath, `# Benchmark Summary\n\nGenerated: ${summary.generated_at}\n\n- Benchmark files: ${summary.benchmark_files}\n- Latency samples: ${summary.latency_samples}\n- Minimum latency: ${summary.latency_min_ms ?? 'not available'} ms\n- Median latency: ${summary.latency_p50_ms ?? 'not available'} ms\n- P95 latency: ${summary.latency_p95_ms ?? 'not available'} ms\n- Maximum latency: ${summary.latency_max_ms ?? 'not available'} ms\n- Throughput rows: ${summary.throughput_rows}\n- Mean throughput: ${summary.throughput_mean_per_s ?? 'not available'} strokes/s\n- Reconnect rows: ${summary.reconnect_rows}\n- Bot replay rows: ${summary.bot_rows}\n- AI rows: ${summary.ai_rows}\n- AI successes: ${summary.ai_successes}\n`);
+writeFileSync(markdownPath, `# Benchmark Summary\n\nGenerated: ${summary.generated_at}\n\n- Benchmark files: ${summary.benchmark_files}\n- Latency samples: ${summary.latency_samples}\n- Minimum latency: ${summary.latency_min_ms ?? 'not available'} ms\n- Median latency: ${summary.latency_p50_ms ?? 'not available'} ms\n- P95 latency: ${summary.latency_p95_ms ?? 'not available'} ms\n- Maximum latency: ${summary.latency_max_ms ?? 'not available'} ms\n- Throughput rows: ${summary.throughput_rows}\n- Mean throughput: ${summary.throughput_mean_per_s ?? 'not available'} strokes/s\n- Reconnect rows: ${summary.reconnect_rows}\n- Bot replay rows: ${summary.bot_rows}\n- AI attempts: ${summary.ai_attempted}\n- AI skipped: ${summary.ai_skipped}\n- AI successes: ${summary.ai_successes}\n- AI success rate: ${summary.ai_success_rate === null ? 'not available' : `${(summary.ai_success_rate * 100).toFixed(2)}%`}\n`);
 console.log(`Wrote ${jsonPath} and ${markdownPath}`);

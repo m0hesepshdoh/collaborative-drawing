@@ -1,0 +1,5 @@
+clients,sent,received,dropped,duration_s,throughput_per_s
+2,196,0,0,10.102,0
+4,195,0,0,10.102,0
+8,196,0,0,10.1,0
+16,196,0,0,10.1,0

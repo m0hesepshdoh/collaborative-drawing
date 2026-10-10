@@ -17,4 +17,5 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToGroup('web', \App\Http\Middleware\MeasureQueries::class);
     })
     ->withExceptions(fn (Exceptions $exceptions) => null)
+    ->withCommands()
     ->create();
