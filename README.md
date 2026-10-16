@@ -1,219 +1,222 @@
-# Collaborative Drawing Website
+# Collaborative Drawing System
 
-![PHP 8.3+](https://img.shields.io/badge/PHP-8.3%2B-777BB4?logo=php&logoColor=white)
-![Laravel 13](https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel&logoColor=white)
-![MySQL 8+](https://img.shields.io/badge/MySQL-8%2B-4479A1?logo=mysql&logoColor=white)
-![License](https://img.shields.io/badge/License-not%20specified-lightgrey)
+A full-stack collaborative drawing platform built with Laravel, Reverb, and a browser-based canvas interface. The project enables two participants to share a drawing session in real time, supports human moderation and administrative oversight, and includes a bot system that replays curated human-drawn patterns rather than generating arbitrary strokes.
 
-A browser-based collaborative drawing application for two human participants. It supports real-time stroke synchronization, moderated reports and bans, configurable backgrounds, session completion, optional SenseNova image editing, and an administrator-curated drawing bot.
+## Abstract
 
-## Contents
+This repository implements a browser-based multi-user drawing system designed to support synchronous visual collaboration with moderation, persistence, and limited automation. The application sits at the intersection of interactive web systems, event-driven communication, and human-in-the-loop curation. Human participants join a session using a six-character code and draw onto a shared canvas. Strokes are recorded and broadcast in near real time to the other participant using Laravel Reverb, while administrative users can inspect sessions, manage reports, restrict abusive IP addresses, and decide which recorded patterns are approved for bot replay.
 
-- [System Architecture](#system-architecture)
-- [Backend Design](#backend-design)
-- [Database](#database)
-- [HTTP API](#http-api)
-- [Authentication and Security](#authentication-and-security)
-- [Testing and Quality Assurance](#testing-and-quality-assurance)
-- [Performance Benchmark Suite](#performance-benchmark-suite)
-- [AI Integration](#ai-integration)
-- [Installation and Deployment](#installation-and-deployment)
+The system is intentionally minimal in architectural scope: it avoids large frontend frameworks, complex service layers, and unnecessary abstraction. Instead, it relies on Laravel's conventional MVC structure, Eloquent models, queued jobs, and broadcast events to coordinate user activity and session state. This lean architecture makes the project suitable as a reference implementation for real-time browser collaboration, experimental bot behavior, and audit-friendly moderation infrastructure.
 
-## System Architecture
+## Project Goals
 
-The application follows Laravel's Model-View-Controller organization. Blade templates render the landing, session, and administrative pages; controllers handle HTTP requests and coordinate Eloquent queries, validation, and domain actions. Laravel Reverb and Echo provide private-channel event delivery. Database-backed jobs handle delayed bot behavior, while a scheduled task removes inactive participants and old ended sessions.
+The application is designed to satisfy the following primary objectives:
 
-```mermaid
-flowchart LR
-	Browser[Browser: Blade and canvas.js] -->|HTTP forms and JSON| Laravel[Laravel routes and middleware]
-	Browser <-->|Private events| Echo[Laravel Echo]
-	Laravel --> Controllers[Controllers]
-	Controllers --> Models[Eloquent models]
-	Models <--> DB[(MySQL database)]
-	Controllers --> Events[Broadcast events]
-	Events --> Reverb[Laravel Reverb]
-	Laravel --> Queue[Database queue]
-	Queue --> Jobs[Bot jobs]
-	Jobs --> Models
-	Schedule[Laravel scheduler] --> DB
-	Controllers -->|Optional image-edit request| SenseNova[SenseNova API]
-	Controllers --> Storage[(Public file storage)]
-```
+- provide real-time shared drawing between two human users
+- support session lifecycle management, reporting, inactivity cleanup, and bans
+- enable a lightweight admin interface for moderation and configuration
+- allow a curated imitation bot to replay known human patterns
+- collect session data that can be reviewed and approved for future bot behavior
+- operate in a minimal, cost-effective, and source-controlled deployment model
 
-### Design and folder layout
+## System Overview
 
-The repository does not implement a separate Repository or Service layer. Controllers use Eloquent models and Laravel facilities directly; background work is separated into queue jobs, and cross-client notifications are represented by event classes.
+The system is organized around a central session model. Each session receives a unique six-character identifier and is associated with a background, a set of players, and a set of recorded strokes. Participants are identified by their client IP address, which is also used for moderation, access control, and session validation. A human may create a new session, join an existing one, or interact with a bot-enabled session. Once a second human participant joins, or when a bot session has been created, the session becomes active and real-time drawing can begin.
 
-| Path | Responsibility |
-| --- | --- |
-| `app/Http/Controllers/` | Session, landing, background, bot-pattern, and administration request handling |
-| `app/Http/Middleware/` | Banned-IP checks, administrator IP/session checks, and private-channel authorization |
-| `app/Models/` | Eloquent records and relationship definitions |
-| `app/Events/` | Private Reverb broadcasts for session changes and strokes |
-| `app/Jobs/` | Delayed bot joining and bot drawing execution |
-| `routes/web.php`, `routes/channels.php` | Browser/JSON routes and private broadcast channel authorization |
-| `resources/views/` | Blade pages for the public application and admin panel |
-| `public/js/canvas.js` | Canvas interaction, client synchronization, and AI request handling |
-| `database/migrations/` | Application and Laravel framework table definitions |
-| `tests/Feature/` | HTTP/domain integration tests using an in-memory SQLite database |
+The software stack consists of:
 
-## Backend Design
+- PHP 8.3+ and Laravel 13 for application logic and HTTP routing
+- MySQL as the default persistence layer
+- Laravel Reverb for event-driven real-time broadcasts
+- Laravel Echo in the browser for channel subscription and broadcasting
+- Database-driven queue jobs for asynchronous bot behavior
+- Blade templates for server-rendered administrative and session views
+- HTML5 Canvas and vanilla JavaScript for interactive drawing on the client side
 
-The backend is built with Laravel 13 and PHP 8.3 or later. HTTP routes are defined in `routes/web.php`; they use Laravel's web middleware stack, including session and CSRF protections. The application primarily serves HTML and form redirects, with JSON responses for session state, stroke, finish, and AI operations. These routes are not a separately versioned `routes/api.php` API.
+## Functional Description
 
-`SessionController` implements session creation and joining, participant presence, stroke persistence, finish-state transitions, reset, and SenseNova image generation. `AdminController`, `BackgroundController`, and `BotPatternController` implement administrative management. `AdminAuthController` provides the single administrator login flow. Validation uses Laravel request validation; transactional creation uses `DB::transaction`.
+### 1. Session lifecycle
 
-`BotJoinJob` adds a bot after a configurable delay when requested. `BotDrawJob` replays a randomly selected approved pattern or emits a fallback generated stroke, then reschedules itself while the session remains active. Events use `ShouldBroadcastNow` on a private `session.{code}` channel. `routes/console.php` schedules stale-player cleanup every minute; the three-minute inactivity threshold is evaluated by that scheduled task.
+A drawing session begins when a user creates a session or joins a valid session code. The session moves through states such as waiting, active, and ended, and may be finalized when certain conditions are reached, such as prescribed finish deadlines or explicit completion events. Session records retain metadata about the background, finish state, AI outputs, and timestamps for participation and activity.
 
-## Database
+The session model is backed by the `sessions` table and includes relationships to:
 
-MySQL 8 or later is the configured production/default database. Laravel Eloquent is the ORM; migrations use Laravel's schema builder. Tests switch to in-memory SQLite. The application's drawing-session model maps to the table named `sessions`; Laravel's database-backed browser sessions use `http_sessions` to avoid a table-name collision.
+- players
+- recorded strokes
+- reports
+- background metadata
+- AI output information (when enabled)
 
-| Model/table | Purpose and key relationships |
-| --- | --- |
-| `DrawingSession` / `sessions` | Six-character code, lifecycle and finish state; belongs to an optional `Background`; has many `Player`, `Report`, and `RecordedStroke` rows |
-| `Player` / `players` | Human or bot participant; belongs to a session; tracks IP address, activity, and leave time |
-| `Background` / `backgrounds` | Uploaded image metadata; has many sessions |
-| `RecordedStroke` / `recorded_strokes` | JSON point sequence, color, size, author IP, and draw time; belongs to a session |
-| `Report` / `reports` | Reporter/reported IP and session reference; belongs to a session when the session still exists |
-| `Ban` / `bans` | Unique banned IP address and optional reason |
-| `BotPattern` / `bot_patterns` | JSON stroke sequence and approval metadata; optionally references its source session |
-| `AppSetting` / `app_settings` | AI enablement and bot/finish wait durations; the singleton row is created on demand |
-| Framework tables | Database queue, failed jobs, cache, cache locks, and HTTP sessions |
+The `players` table is used to track each participant's IP, join timestamp, last activity time, and whether the player is a human or bot. `left_at` is used to model temporary disconnects, removals, or session exits. These records provide the basis for session validation and moderation logic.
 
-Create or update the schema with:
+### 2. Real-time drawing synchronization
 
-```bash
-php artisan migrate
-```
+The application uses a shared-canvas design in which each stroke is generated on the client and submitted to the server. Each incoming stroke is validated, persisted as a recorded stroke, and then broadcast to the other participant(s) via a private Reverb channel. Client-side drawing logic draws on a local canvas using data contained in each broadcast payload.
 
-There is no application seeder or bundled sample data. Upload backgrounds through the administrator interface; if none exist, new sessions use a white canvas. The `AppSetting` singleton is initialized on first access.
+This architecture keeps the real-time interaction lightweight and avoids excessive server-side rendering. The code treats stroke objects as canonical event payloads containing point sequences, color, size, and a client-side identifier. This makes it possible to de-duplicate or inspect events while retaining a consistent data model for later replay or moderation.
 
-## HTTP API
+### 3. Moderation, policy, and anti-abuse controls
 
-Routes are same-origin web routes. The session creation/joining, leave/report, and admin operations are browser form workflows and normally respond with redirects and flash messages. JSON clients should send `Accept: application/json`; validation errors then use Laravel's JSON error format (HTTP 422). The tables list the registered routes, including administrative HTML workflows.
+The project is built around an administrative moderation model rather than a generic user-account system. Participants are not authenticated via app users; instead, session membership is derived from client IP addresses. This is a deliberately narrow trust boundary intended for controlled or local deployments, but it allows the system to enforce session-level access checks, bans, and report-driven interventions.
 
-`{admin_path}` is `admin-panel-xyz` by default and is configurable with `ADMIN_PATH`. Session routes and broadcast authorization are additionally subject to the relevant participant/IP checks described in [Authentication and Security](#authentication-and-security).
+The application supports:
 
-### Public and session routes
+- report creation when a participant identifies abuse or misconduct
+- ban records keyed by IP address
+- forced disconnects for banned or removed players
+- inactivity-based cleanup and stale-session enforcement
+- configurable admin path and IP allow-list
+- password-based admin authentication
 
-| Method | URL | Request | Success response | Other common status |
-| --- | --- | --- | --- | --- |
-| `GET` | `/` | None | `200`, landing HTML | — |
-| `POST` | `/session/create` | Form: optional `bot_after_timeout` boolean | `302` redirect to the created session | `422` invalid JSON request |
-| `POST` | `/session/bot` | No required fields | `302` redirect to a session with a bot | — |
-| `POST` | `/session/join` | Form: `code` (six alphanumeric characters) | `302` redirect to the joined session | `302` with flash error for invalid/full session; `422` JSON validation error |
-| `GET` | `/session/{code}` | Session code in path | `200`, session HTML | `302` if current IP has not joined; `404` if not active/waiting |
-| `POST` | `/session/{code}/leave` | None | `302` redirect to `/` | `404` unknown session |
-| `POST` | `/session/{code}/report` | None | `302` redirect to `/` with report/availability message | `302` if not an active participant |
-| `POST` | `/session/{code}/clear` | None | `204 No Content` | `403` not an active participant; `404` unknown session |
-| `POST` | `/session/{code}/record-stroke` | JSON: `points` (2–1000 `{x,y}` points), `color` (`#RRGGBB`), `size` (1–40), `client_stroke_id`; optional `drawn_at` | `201`, `{"id": number}` | `403`, `404`, or `422` |
-| `POST` | `/session/{code}/heartbeat` | None | `204 No Content` | `403` not an active participant; `404` unknown session |
-| `POST` | `/session/{code}/finish` | None | `200` JSON finish state, remaining seconds, finisher, and AI availability | `403` or `404` |
-| `GET` | `/session/{code}/state` | None | `200` JSON state, deadline, image URL, and AI availability fields | `403` or `404` |
-| `POST` | `/session/{code}/reset` | None | `200`, `{"state":"drawing"}` | `403` or `404` |
-| `POST` | `/session/{code}/generate-ai` | JSON: required `image_data_url`; optional string `prompt` | `200`, `{"success":true,"image_url":"...","state":"done"}` | `403`, `409` AI disabled, `422` validation, `500` configuration/provider processing, `502` provider failure |
-| `POST` | `/broadcasting/auth` | Laravel Echo private-channel authorization form fields, including `channel_name` and socket data | `200`, broadcaster authorization JSON | `403` invalid channel or inactive participant |
+This design exposes the system to the known risk of IP spoofing when deployed behind untrusted proxies, which is why the project explicitly emphasizes deployment-time proxy control and proper environment configuration.
 
-### Administrative routes
+### 4. Admin panel and governance model
 
-Every route below is prefixed by `{admin_path}`. Login routes require an allow-listed IP; all other admin routes also require the administrator session. Successful page requests return `200` HTML. Successful form mutations generally redirect (`302`) with a flash message. Unauthorized IPs receive `403`; unauthenticated admin requests redirect to the login page.
+The admin panel is protected by three layers:
 
-| Method | URL | Request | Success behavior |
-| --- | --- | --- | --- |
-| `GET` | `/{admin_path}/login` | None | Login HTML |
-| `POST` | `/{admin_path}/login` | Form: required `password` | Valid credentials set admin session and redirect; invalid credentials redirect with an error |
-| `POST` | `/{admin_path}/logout` | None | Clear admin session and redirect to login |
-| `GET` | `/{admin_path}` | None | Dashboard with active/waiting sessions |
-| `GET` | `/{admin_path}/settings` | None | Settings HTML |
-| `POST` | `/{admin_path}/settings` | Form: `bot_wait_seconds` (1–3600), `finish_wait_seconds` (10–3600), optional `ai_generation_enabled` boolean | Validate and persist settings |
-| `DELETE` | `/{admin_path}/session/{id}` | Session database ID | Delete one session |
-| `DELETE` | `/{admin_path}/sessions/all` | None | Delete all sessions |
-| `DELETE` | `/{admin_path}/session/{id}/player/{playerId}` | Session and player database IDs | Mark participant as removed and broadcast kick |
-| `GET` | `/{admin_path}/backgrounds` | None | Background list/upload HTML |
-| `POST` | `/{admin_path}/backgrounds` | Multipart form: `image` (image, maximum 5120 KB) | Store image on public disk and create metadata |
-| `DELETE` | `/{admin_path}/backgrounds/{background}` | Background model ID | Delete stored image and metadata |
-| `GET` | `/{admin_path}/reports` | None | Report list HTML |
-| `GET` | `/{admin_path}/bans` | None | Ban list HTML |
-| `POST` | `/{admin_path}/ban` | Form: `ip_address` (valid IP), optional `reason` (maximum 255 characters) | Create/update ban and mark active matching participants as left |
-| `DELETE` | `/{admin_path}/ban/{id}` | Ban database ID | Remove ban |
-| `GET` | `/{admin_path}/bot-patterns` | None | Approved-pattern management HTML |
-| `GET` | `/{admin_path}/bot-patterns/{id}/preview` | Pattern database ID | Pattern preview HTML |
-| `DELETE` | `/{admin_path}/bot-patterns/{id}` | Pattern database ID | Delete approved pattern |
-| `GET` | `/{admin_path}/recordings` | None | Grouped human-recording review HTML |
-| `POST` | `/{admin_path}/recordings/{id}/approve` | Recording database ID | Convert that participant's session recording into an approved pattern |
-| `DELETE` | `/{admin_path}/recordings/{id}` | Recording database ID | Delete the participant's grouped recording |
+1. a configurable path such as `/admin-panel-xyz`
+2. an allow-list of permitted IP addresses
+3. a password-based session flag
 
-The two delete operations for bot-pattern management and recording review intentionally use separate paths: `DELETE /{admin_path}/bot-patterns/{id}` deletes a pattern, while `DELETE /{admin_path}/recordings/{id}` rejects/removes a recording.
+Once authenticated, the admin can inspect active or waiting sessions, delete them, remove players, review reports, manage bans, upload backgrounds, and curate bot training patterns. The admin interface is implemented as a thin set of Laravel controllers and Blade templates, making it straightforward to extend while preserving the minimal code footprint of the project.
 
-## Authentication and Security
+Administrative functions include:
 
-- **Participants:** There are no participant accounts or bearer tokens. The current request IP identifies an active human player within a session. Session operations verify that the IP has an active, non-bot player row.
-- **Private broadcasts:** `SessionBroadcastAuthMiddleware` accepts only a correctly shaped `private-session.{six-character-code}` channel and authorizes it only when that IP has an active player row in the session.
-- **Administrator:** A single password from `ADMIN_PASSWORD` sets an `admin_authenticated` session flag. `ADMIN_ALLOWED_IPS` restricts access before login and on protected admin routes. There are no application roles or policy classes.
-- **Validation:** Laravel validation constrains session codes, stroke coordinates/colors/sizes, settings, IP addresses, and uploaded image type/size. Web form requests use Laravel CSRF middleware.
-- **Transport and secrets:** Set a unique `APP_KEY`, keep `.env` out of source control, use HTTPS, and provide a strong admin password. Laravel uses the application key for framework encryption such as encrypted cookies; drawing records are not separately encrypted at the application layer.
-- **CORS and throttling:** The application assumes same-origin browser access and does not define an app-specific CORS policy or custom rate limits. Add appropriate edge/server controls before exposing it publicly.
-- **Proxy trust:** `bootstrap/app.php` currently trusts forwarded proxy headers from any proxy. Restrict trusted proxies to the actual reverse-proxy addresses in a public deployment so client IP checks cannot be spoofed.
+- dashboard view for session monitoring
+- settings for bot wait time and finish wait time
+- session deletion and all-session cleanup
+- per-player removal and broadcast kick
+- background upload and deletion
+- report review and ban management
+- pattern approval and rejection
 
-## Testing and Quality Assurance
+### 5. Bot behavior and imitation model
 
-Feature tests use PHPUnit 11 through Laravel's test runner. `tests/TestCase.php` migrates an in-memory SQLite database for each test setup. Current tests cover admin settings, AI enablement and image storage, session finishing, stroke persistence/broadcast payload bounds, and bot fallback scheduling. There are no dedicated unit test cases at present.
+The bot system is intentionally curatorial rather than generative. Rather than inventing random strokes, the bot selects from a set of approved patterns stored in `bot_patterns` and replays them in sequence. This makes the bot behave more like an imitation agent derived from previously observed human behavior, while preserving an explicit human approval step.
 
-Run tests and formatting checks with:
+The bot logic is implemented through queued jobs:
 
-```bash
-php artisan test
-./vendor/bin/pint --test
-```
+- `BotJoinJob` adds the bot after a configured delay if one human remains in a waiting session
+- `BotDrawJob` chooses an approved pattern or falls back to synthetic random strokes if no approved patterns exist
+- each stroke is persisted as a recorded stroke and broadcast to the active session
 
-Apply Laravel Pint formatting when needed:
+Patterns are created from recorded human drawings and only become operational after admin approval. This separation of collection and approval is critical to the system's intended design: it preserves human agency and keeps the imitation process auditable.
 
-```bash
-./vendor/bin/pint
-```
+## Data Model
 
-Run `composer test:report` to generate JUnit XML and a CSV summary. The performance suite is documented separately in [benchmarks/README.md](benchmarks/README.md).
+The core application tables are centered around session-oriented interaction and moderation.
 
-## Performance Benchmark Suite
+### Sessions
 
-The opt-in benchmark suite measures WebSocket latency, stroke throughput, reconnect behavior, bot replay, AI request latency, query overhead, and health observations without changing normal application features. See [benchmarks/README.md](benchmarks/README.md) for setup, commands, and reproducibility guidance.
+The `DrawingSession` model stores the canonical session state and lifecycle metadata. Each session has a unique code, a background association, a status field, and optional AI-related values such as `finish_state`, `finished_by_ip`, `finish_deadline_at`, and `ai_image_url`.
+
+It relates to:
+
+- `players`: all participants in the session
+- `recordedStrokes`: persistent drawing history for the session
+- `reports`: reports attached to the session
+- `background`: image metadata used as a visual overlay
+
+### Players
+
+The `Player` model records either human or bot participation. The `ip_address` column allows human players to be identified by their network address while bot rows are allowed to have no address. The `last_activity_at` and `left_at` timestamps support inactivity detection, cleanup, and custom moderation flows.
+
+### Recorded strokes
+
+The `RecordedStroke` model stores the actual drawing actions as JSON arrays of point pairs along with color, stroke size, and timestamp. This historical data supports both session replay and bot pattern approval workflows. The design keeps raw human-drawn traces separate from curated bot patterns, allowing a clear distinction between observed behavior and approved imitation behavior.
+
+### Reports and bans
+
+Reports and bans form the moderation backbone. Reports are created when a participant reports another user within a session, while bans associate a network address with a reason and are enforced at the route-middleware layer.
+
+### App settings
+
+`AppSetting` is a singleton-style configuration record used for application tuning, especially:
+
+- bot wait seconds
+- finish wait seconds
+- AI generation enablement
+
+This allows the admin panel to persist operational parameters without requiring custom env-only configuration for every runtime decision.
+
+## Architecture and Execution Flow
+
+The system follows a conventional Laravel request lifecycle, with event-driven updates layered over it.
+
+1. A user reaches the landing page and either creates a session, joins by code, or starts a bot session.
+2. The controller validates the request, creates or retrieves the session, and creates the corresponding player row.
+3. Browser-side canvas interactions collect stroke data and submit them through session routes.
+4. The server validates the stroke payload, stores it in `recorded_strokes`, and broadcasts the event to the other participant through the session channel.
+5. Administrative actions are handled through authenticated, IP-restricted routes that govern moderate and configuration tasks.
+6. Background tasks such as delayed bot join or timed bot draw execution are queued and executed asynchronously.
+7. Data from drawing sessions can be reviewed by the admin, approved into bot patterns, and later replayed by the bot.
+
+## Security and Deployment Considerations
+
+The repository is intentionally explicit about its deployment assumptions and known risks. The product is designed for same-origin use and assumes a controlled web application environment. Several key operational considerations matter:
+
+- sensitive values such as `ADMIN_PASSWORD`, `APP_KEY`, and Reverb secrets should stay in the environment
+- HTTPS and a reverse proxy should be used before public exposure
+- trusted proxy headers should be restricted to actual upstream infrastructure
+- IP-based access control is only as safe as the gateway and network configuration
+- admin access remains vulnerable to spoofed client addresses if reverse proxy trust is misconfigured
+
+The application also includes a `not.banned` middleware gate for public session routes, which prevents banned addresses from creating or joining sessions.
+
+## Performance Benchmarking
+
+The repository includes a dedicated benchmark suite under `benchmarks/` and a set of Node-based scripts for measuring latency, throughput, reconnect reliability, bot replay behavior, AI response timing, and query cost. These benchmark artifacts are not merely supplementary—they provide empirical validation of the system's real-time performance profile.
+
+The benchmark configuration captures:
+
+- client-side latency across session events
+- stroke throughput under load
+- reconnect behavior during transient connection loss
+- bot replay timing and behavior
+- AI-generation latency under finalization workflows
+- measurement aggregation and CSV/JUnit export
+
+This component makes the project suitable for both demonstration and experimentation in distributed or low-latency network environments.
 
 ## AI Integration
 
-The runtime feature is image-to-image editing, not an embedded chatbot or general-purpose LLM. After a session is finalized, the eligible participant can submit the canvas PNG data URL and an optional prompt to `POST /session/{code}/generate-ai`. The backend calls the SenseNova image-edit endpoint using model `sensenova-u1.5-lite`, downloads the returned image, writes a PNG under `storage/app/public/ai-results/{session-code}/`, and stores the public image URL and prompt on the session.
+The project includes optional AI enhancement via SenseNova image generation. When AI is enabled in the admin settings and a session has been finalized, the eligible participant may submit canvas data and optionally a prompt to the generate-AI endpoint. The server then calls the SenseNova API, stores the generated image under the public storage path, and records the resulting URL and prompt on the session model.
 
-Configure `SENSENOVA_API_KEY` in the server environment and enable AI generation in the admin settings. Provider errors are returned as JSON; upstream failures are reported as `502`, while missing configuration or processing failures can return `500`. Do not expose the provider key in browser JavaScript. No separate development-time AI coding tool or model usage is recorded in this repository; this section documents the implemented runtime integration.
+This capability is designed as an augmentation to the collaborative drawing workflow rather than a general-purpose conversational assistant. It is tightly scoped to image transformation and is subject to feature flags and runtime configuration. The integration is purposely separated from the rest of the drawing logic so it can be disabled without breaking the core collaboration flow.
 
-## Installation and Deployment
+## Installation and Setup
 
 ### Requirements
 
-- PHP 8.3 or later and Composer 2
-- MySQL 8 or later for the default deployment configuration
-- PHP extensions required by Laravel and the selected database driver; Composer's platform checks report missing required extensions
-- A reachable SenseNova account/API key only if AI image generation will be enabled
+- PHP 8.3+
+- Composer 2
+- MySQL 8+
+- Laravel-compatible PHP extensions as required by the selected environment
+- Optional: SenseNova API access for AI generation
 
-No hosting vendor is prescribed by the repository. The steps below are platform-neutral and assume a Linux/PHP host with persistent storage and long-running worker/scheduler processes.
-
-### Local setup
+### Basic local setup
 
 ```bash
-cp .env.example .env
 composer install
+cp .env.example .env
 php artisan key:generate
-```
-
-Edit `.env` to configure at least `APP_URL`, database credentials, session/cache/queue drivers, Reverb connection details, `ADMIN_PASSWORD`, and `ADMIN_ALLOWED_IPS`. Set `SENSENOVA_API_KEY` if using image generation. Never deploy the example admin password or local Reverb secrets.
-
-Then initialize storage and the schema:
-
-```bash
 php artisan migrate
 php artisan storage:link
 ```
 
-Run the application services in separate terminals during development:
+Then configure the following environment values:
+
+- `APP_URL`
+- database credentials
+- Reverb settings
+- `ADMIN_PASSWORD`
+- `ADMIN_ALLOWED_IPS`
+- `ADMIN_PATH`
+- `SENSENOVA_API_KEY` if AI generation is enabled
+
+### Local runtime
+
+Run the application services in separate terminals:
 
 ```bash
 php artisan serve --host=0.0.0.0 --port=8000
@@ -222,17 +225,40 @@ php artisan queue:work
 php artisan schedule:work
 ```
 
-Open `http://127.0.0.1:8000`. The queue worker is required for delayed bot jobs. The scheduler must run for inactive-player cleanup and ended-session retention cleanup. The admin login path defaults to `/admin-panel-xyz/login` and changes with `ADMIN_PATH`.
+The queue worker supports delayed bot behavior, while the scheduler ensures stale players and ended sessions are cleaned up according to the app's rules.
 
-### Production procedure
+## Validation and Testing
 
-1. Provision PHP 8.3+, Composer 2, MySQL 8+, and a web server/reverse proxy. Configure DNS and TLS for the application and the Reverb websocket endpoint.
-2. Deploy the source and install production dependencies with `composer install --no-dev --optimize-autoloader`.
-3. Create a production `.env` with `APP_ENV=production`, `APP_DEBUG=false`, HTTPS `APP_URL`, a unique generated `APP_KEY`, database credentials, secure session settings, Reverb TLS settings, a strong `ADMIN_PASSWORD`, and a narrow `ADMIN_ALLOWED_IPS` allow-list. Add `SENSENOVA_API_KEY` only when AI is enabled.
-4. Configure the web root to serve only the Laravel `public/` directory. Use HTTPS, correctly constrain trusted proxy addresses, and ensure `storage/` and `bootstrap/cache/` are writable by the application user.
-5. Run `php artisan migrate --force` and `php artisan storage:link`. Upload backgrounds through the admin interface as needed.
-6. Run `php artisan config:cache` and `php artisan route:cache` as part of deployment. Do not cache configuration before production environment values are available.
-7. Supervise `php artisan reverb:start` and `php artisan queue:work` with the host's process manager. Invoke `php artisan schedule:run` every minute through cron or a managed scheduler. Configure queue retry/failure monitoring and persistent backups for the database and public uploads.
-8. Verify the landing page, admin IP/login restrictions, cross-browser session synchronization, scheduled cleanup, background uploads, and (if configured) the SenseNova image workflow.
+The project includes automated tests under `tests/` and uses PHPUnit through Laravel's testing infrastructure. These tests cover key interactions such as admin configuration, session finalization, AI settings, recording and broadcasting behavior, and bot fallback scheduling. The codebase also integrates benchmark scripts that can be used to evaluate latency and reliability under representative usage patterns.
 
-The `sessions` application table name is intentional; Laravel's database-backed HTTP session table is `http_sessions`. Keep both when managing backups and schema migrations.
+Common validation commands:
+
+```bash
+php artisan test
+./vendor/bin/pint --test
+```
+
+For benchmark exports and detailed evidence collection, the repository provides:
+
+```bash
+composer test:report
+```
+
+## Repository Structure
+
+The repository is organized around conventional Laravel layout and experimental benchmarking scripts:
+
+- `app/` — controllers, models, jobs, events, and middleware
+- `config/` — application configuration including admin settings
+- `database/` — migrations, factories, and seeders
+- `routes/` — HTTP and broadcast route definitions
+- `resources/views/` — Blade views for the public app and admin panel
+- `public/` — served web assets and generated static files
+- `storage/` — runtime file uploads and generated AI output
+- `benchmarks/` — performance scripts and result archives
+- `figures/` — plotting and visualization scripts for benchmark analysis
+- `scripts/` — data processing and JUnit/export automation
+
+## Summary
+
+This project demonstrates a practical, minimal, and academically interpretable approach to synchronous collaborative drawing in a web environment. It combines real-time communication, event-driven processing, and human-directed moderation in a single Laravel application, while also incorporating a bot system that depends on curated human patterns rather than unrestricted algorithmic generation. The result is a system that is structurally simple, operationally transparent, and well-suited for teaching, experimentation, and benchmarking in the broader domain of collaborative web applications.
